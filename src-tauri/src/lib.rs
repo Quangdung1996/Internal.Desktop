@@ -1,10 +1,14 @@
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tauri::webview::{NewWindowFeatures, NewWindowResponse};
-use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent, Wry};
+use tauri::{
+  AppHandle, Manager, Url, UserAttentionType, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent, Wry,
+};
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_opener::OpenerExt;
@@ -41,7 +45,7 @@ pub fn run() {
         .with_filter(|label| label == MAIN || label == CHAT)
         .build(),
     )
-    .invoke_handler(tauri::generate_handler![open_link, set_badge])
+    .invoke_handler(tauri::generate_handler![open_link, set_badge, notify])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -186,7 +190,73 @@ const DESKTOP_SCRIPT: &str = r#"(() => {
       setBadge: (count) => invoke("set_badge", { count: Math.max(0, Math.floor(Number(count) || 0)) }),
     }),
   });
+  // Replaces the notification plugin's window.Notification (its script runs before this one): the FE's chat popups
+  // (`new Notification(title, { body, tag })`) go to `notify`, which adds the sound, the de-duplication across the
+  // main and chat windows, and the Dock bounce / taskbar flash. Desktop apps need no permission: always granted.
+  function DesktopNotification(title, options) {
+    const o = options || {};
+    this.title = String(title ?? "");
+    this.body = String(o.body ?? "");
+    this.tag = o.tag == null ? "" : String(o.tag);
+    this.onclick = null;
+    this.onclose = null;
+    invoke("notify", { title: this.title, body: this.body, tag: this.tag });
+  }
+  DesktopNotification.prototype.close = function () {};
+  Object.defineProperty(DesktopNotification, "permission", { get: () => "granted" });
+  DesktopNotification.requestPermission = (callback) => {
+    if (typeof callback === "function") callback("granted");
+    return Promise.resolve("granted");
+  };
+  window.Notification = DesktopNotification;
 })();"#;
+
+/// One popup per message: the main window (RMS pages) and the chat window both receive it, both
+/// call `notify` with the same title, body and tag within a moment.
+static RECENT_NOTIFICATIONS: Mutex<Vec<(String, Instant)>> = Mutex::new(Vec::new());
+const DUPLICATE_WINDOW: Duration = Duration::from_secs(3);
+
+/// The OS default sound: notify-rust plays none without a name, and Windows then marks the toast silent.
+#[cfg(target_os = "macos")]
+const NOTIFICATION_SOUND: Option<&str> = Some("NSUserNotificationDefaultSoundName");
+#[cfg(windows)]
+const NOTIFICATION_SOUND: Option<&str> = Some("Default");
+#[cfg(not(any(target_os = "macos", windows)))]
+const NOTIFICATION_SOUND: Option<&str> = None;
+
+fn is_duplicate(key: String) -> bool {
+  let now = Instant::now();
+  let mut recent = RECENT_NOTIFICATIONS.lock().unwrap_or_else(|e| e.into_inner());
+  recent.retain(|(_, at)| now.duration_since(*at) < DUPLICATE_WINDOW);
+  if recent.iter().any(|(k, _)| *k == key) {
+    return true;
+  }
+  recent.push((key, now));
+  false
+}
+
+/// Called by the page's `new Notification(..)`: an OS notification with sound, and the app asks
+/// for attention when none of its windows is in front. async: notify-rust blocks on macOS.
+#[tauri::command]
+async fn notify(app: AppHandle, title: String, body: String, tag: String) {
+  if is_duplicate(format!("{tag}\u{1f}{title}\u{1f}{body}")) {
+    return;
+  }
+  let mut builder = app.notification().builder().title(&title).body(&body);
+  if let Some(sound) = NOTIFICATION_SOUND {
+    builder = builder.sound(sound);
+  }
+  if let Err(e) = builder.show() {
+    log::error!("showing a notification failed: {e}");
+  }
+  let in_front = app.webview_windows().values().any(|w| w.is_focused().unwrap_or(false));
+  if !in_front {
+    let window = app.get_webview_window(CHAT).or_else(|| app.get_webview_window(MAIN));
+    if let Some(window) = window {
+      let _ = window.request_user_attention(Some(UserAttentionType::Informational));
+    }
+  }
+}
 
 /// Called by `window.desktopApp.setBadge`. Windows has no badge API (`set_badge_count` is a no-op
 /// error there); the tray tooltip carries the count on every OS.
