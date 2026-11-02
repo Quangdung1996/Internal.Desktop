@@ -1,0 +1,50 @@
+# Builds the Windows (.exe/.msi) and macOS (.dmg, universal) installers on GitHub runners
+# and attaches them to a draft release "app-v<version>" (version from src-tauri/tauri.conf.json).
+# Based on https://v2.tauri.app/distribute/pipelines/github/ ; manual trigger only because
+# macOS minutes are billed 10x on private repos.
+name: build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target universal-apple-darwin
+          - platform: windows-latest
+            args: ''
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: app-v__VERSION__
+          releaseName: AMS v__VERSION__
+          releaseBody: Download the installer for your OS from the assets below.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
