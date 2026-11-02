@@ -4,7 +4,7 @@ use std::time::Duration;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tauri::webview::{NewWindowFeatures, NewWindowResponse};
-use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent, Wry};
+use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent, Wry};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_opener::OpenerExt;
@@ -12,7 +12,9 @@ use tauri_plugin_updater::UpdaterExt;
 use tauri_plugin_window_state::StateFlags;
 
 const MAIN: &str = "main";
-/// capabilities/default.json grants "popup-*" the same page permissions as the main window.
+/// The single chat window (see `open_chat`).
+const CHAT: &str = "chat";
+/// capabilities/default.json grants "chat" and "popup-*" the same page permissions as the main window.
 const POPUP_PREFIX: &str = "popup-";
 /// The app lives in the tray for weeks, so checking only at startup is not enough.
 const UPDATE_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
@@ -36,7 +38,7 @@ pub fn run() {
       tauri_plugin_window_state::Builder::default()
         // No VISIBLE flag: quitting from the tray while hidden must not start the next launch hidden.
         .with_state_flags(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED)
-        .with_filter(|label| label == MAIN)
+        .with_filter(|label| label == MAIN || label == CHAT)
         .build(),
     )
     .setup(|app| {
@@ -77,10 +79,52 @@ pub fn run() {
 
 fn show_main(app: &AppHandle) {
   if let Some(window) = app.get_webview_window(MAIN) {
-    let _ = window.unminimize();
-    let _ = window.show();
-    let _ = window.set_focus();
+    bring_forward(&window);
   }
+}
+
+fn bring_forward(window: &WebviewWindow) {
+  let _ = window.unminimize();
+  let _ = window.show();
+  let _ = window.set_focus();
+}
+
+/// The chat as its own window, like a desktop messenger. The FE opens the full chat in a new tab
+/// (sidebar `target="_blank"`, "open in Chat" `window.open(.., "ams-chat")`); here all of them land in
+/// this one window. A bare /chat only brings it forward (keeps the open room); a room link navigates it.
+/// `url` is None from the tray.
+fn open_chat(app: &AppHandle, url: Option<Url>) {
+  if let Some(window) = app.get_webview_window(CHAT) {
+    if let Some(url) = url.filter(|u| u.path() != "/chat" || u.query().is_some()) {
+      let _ = window.navigate(url);
+    }
+    bring_forward(&window);
+    return;
+  }
+  let Some(url) = url.or_else(|| main_url(app)?.join("/chat").ok()) else {
+    return;
+  };
+  let builder = WebviewWindowBuilder::new(app, CHAT, WebviewUrl::External(url))
+    .title("AMS Chat")
+    .inner_size(1100.0, 760.0)
+    .min_inner_size(720.0, 480.0)
+    // Same as the main window: keep HTML5 file drop working for chat attachments on Windows.
+    .disable_drag_drop_handler()
+    .zoom_hotkeys_enabled(true);
+  if let Err(e) = with_handlers(builder, app).build() {
+    log::error!("opening the chat window failed: {e}");
+  }
+}
+
+/// Where the main window is: the prod site, or the dev server under `tauri dev`.
+fn main_url(app: &AppHandle) -> Option<Url> {
+  app.get_webview_window(MAIN)?.url().ok()
+}
+
+/// A /chat page of the FE itself (not a chat-api file URL that happens to share the path).
+fn is_chat_url(app: &AppHandle, url: &Url) -> bool {
+  (url.path() == "/chat" || url.path().starts_with("/chat/"))
+    && main_url(app).is_some_and(|main| main.host_str() == url.host_str())
 }
 
 /// Built here instead of from tauri.conf.json ("create": false) to attach the popup and download handlers.
@@ -121,6 +165,10 @@ fn open_new_window(app: &AppHandle, url: Url, features: NewWindowFeatures) -> Ne
     }
     return NewWindowResponse::Deny;
   }
+  if is_chat_url(app, &url) {
+    open_chat(app, Some(url));
+    return NewWindowResponse::Deny;
+  }
   let label = format!("{POPUP_PREFIX}{}", POPUP_SEQ.fetch_add(1, Ordering::Relaxed));
   // The engine loads `url` into the returned window; about:blank is only the placeholder.
   let blank = WebviewUrl::External("about:blank".parse().expect("about:blank is a valid url"));
@@ -157,6 +205,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     app,
     &[
       &MenuItem::with_id(app, "open", "Mở AMS", true, None::<&str>)?,
+      &MenuItem::with_id(app, "chat", "Mở Chat", true, None::<&str>)?,
       &CheckMenuItem::with_id(app, "autostart", "Khởi động cùng máy", true, autostart, None::<&str>)?,
       &MenuItem::with_id(app, "quit", "Thoát", true, None::<&str>)?,
     ],
@@ -164,6 +213,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
   tray.set_menu(Some(menu))?;
   tray.on_menu_event(|app, event| match event.id.as_ref() {
     "open" => show_main(app),
+    "chat" => open_chat(app, None),
     "autostart" => toggle_autostart(app),
     "quit" => app.exit(0),
     _ => {}

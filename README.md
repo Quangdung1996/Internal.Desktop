@@ -13,8 +13,9 @@ to install). Only shell changes (this repo) need a new desktop release, delivere
 ## What the shell adds (`src-tauri/src/lib.rs`)
 
 - Chat notifications: `tauri-plugin-notification` replaces `window.Notification` in the page (no FE change). Clicking a notification does not open the room.
-- `window.open` / `target="_blank"`: `*.agari.com.vn` and `blob:` open in an app window (session kept); other sites open in the default browser. Without this both engines drop the request.
-- Close = hide to tray (chat keeps running). Tray: Mở AMS / Khởi động cùng máy / Thoát. macOS: Dock click reopens.
+- Chat gets one window of its own (like a messenger): the sidebar Chat link, "open in Chat" and the tray all land in it; a room link navigates it, size/position remembered.
+- Other `window.open` / `target="_blank"`: `*.agari.com.vn` and `blob:` open in an app window (session kept); other sites open in the default browser. Without this both engines drop the request.
+- Close = hide to tray (chat keeps running). Tray: Mở AMS / Mở Chat / Khởi động cùng máy / Thoát. macOS: Dock click reopens.
 - Single instance, remembered window size/position, Ctrl +/- zoom.
 - macOS: downloads saved to ~/Downloads and revealed in Finder; `window.print` works (Tauri print API); camera, mic, location declared in `Info.plist` + `Entitlements.plist`.
 - Auto update: checks GitHub `releases/latest` at startup and every 6 h, asks before installing.
