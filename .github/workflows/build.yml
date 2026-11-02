@@ -1,7 +1,9 @@
-# Builds the Windows (.exe/.msi) and macOS (.dmg, universal) installers on GitHub runners
+# Builds the Windows (NSIS .exe) and macOS (.dmg, universal) installers on GitHub runners
 # and attaches them to a draft release "app-v<version>" (version from src-tauri/tauri.conf.json).
-# Based on https://v2.tauri.app/distribute/pipelines/github/ ; manual trigger only because
-# macOS minutes are billed 10x on private repos.
+# Installed apps auto-update only after that draft is published (releases/latest skips drafts),
+# so publishing the draft is the release gate.
+# Based on https://v2.tauri.app/distribute/pipelines/github/ ; manual trigger so a release is a decision,
+# not a side effect of every push.
 name: build
 
 on:
@@ -18,7 +20,8 @@ jobs:
           - platform: macos-latest
             args: --target universal-apple-darwin
           - platform: windows-latest
-            args: ''
+            # NSIS only: one Windows installer for the updater, per-user install (no admin), no VBSCRIPT/WiX.
+            args: --bundles nsis
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
@@ -41,6 +44,9 @@ jobs:
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the updater artifacts; must match plugins.updater.pubkey in tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         with:
           tagName: app-v__VERSION__
           releaseName: AMS v__VERSION__
@@ -48,3 +54,5 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+          # Also attach the installers to the run page: the draft release is visible only to repo admins.
+          uploadWorkflowArtifacts: true
