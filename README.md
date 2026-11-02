@@ -23,7 +23,7 @@ to install). Only shell changes (this repo) need a new desktop release, delivere
 ## Release (no local toolchain needed)
 
 1. Bump `version` in `src-tauri/tauri.conf.json` (the updater only offers a higher version).
-2. GitHub → Actions → **build** → Run workflow. Windows (NSIS) + macOS (universal) land in a draft release `app-v<version>`.
+2. GitHub → Actions → **build** → Run workflow. Windows (.exe NSIS per-user + .msi per-machine) + macOS (universal) land in a draft release `app-v<version>`.
 3. Test the installers from the draft, then **Publish** it. Installed apps pick it up only after publishing.
 
 One-time repo setup:

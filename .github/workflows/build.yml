@@ -1,4 +1,4 @@
-# Builds the Windows (NSIS .exe) and macOS (.dmg, universal) installers on GitHub runners
+# Builds the Windows (NSIS .exe + MSI) and macOS (.dmg, universal) installers on GitHub runners
 # and attaches them to a draft release "app-v<version>" (version from src-tauri/tauri.conf.json).
 # Installed apps auto-update only after that draft is published (releases/latest skips drafts),
 # so publishing the draft is the release gate.
@@ -20,8 +20,9 @@ jobs:
           - platform: macos-latest
             args: --target universal-apple-darwin
           - platform: windows-latest
-            # NSIS only: one Windows installer for the updater, per-user install (no admin), no VBSCRIPT/WiX.
-            args: --bundles nsis
+            # .exe (NSIS, per-user, no admin) for staff; .msi (WiX, per-machine) for IT deployment.
+            # Each install updates with its own format: the updater reads windows-x86_64-{nsis|msi}.
+            args: --bundles nsis,msi
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
@@ -56,3 +57,5 @@ jobs:
           args: ${{ matrix.args }}
           # Also attach the installers to the run page: the draft release is visible only to repo admins.
           uploadWorkflowArtifacts: true
+          # Fallback key windows-x86_64 (installs that predate per-installer keys) -> NSIS, no UAC prompt.
+          updaterJsonPreferNsis: true
