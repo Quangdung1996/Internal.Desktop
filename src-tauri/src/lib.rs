@@ -4,7 +4,23 @@ use std::time::{Duration, Instant};
 
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
-use tauri::webview::{NewWindowFeatures, NewWindowResponse};
+use tauri::webview::{NewWindowFeatures, NewWindowResponse, PermissionKind, PermissionResponse};
+
+#[cfg(target_os = "macos")]
+mod location;
+/// Windows / Linux: the webview's own geolocation (see `on_permission_request`); GEO_SCRIPT, the only
+/// caller of these, is injected on macOS only.
+#[cfg(not(target_os = "macos"))]
+mod location {
+  #[tauri::command]
+  pub async fn get_location() -> Result<(), String> {
+    Err("unavailable".into())
+  }
+  #[tauri::command]
+  pub async fn location_permission() -> Result<String, String> {
+    Ok("prompt".into())
+  }
+}
 use tauri::{
   AppHandle, Manager, Url, UserAttentionType, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent, Wry,
 };
@@ -45,7 +61,13 @@ pub fn run() {
         .with_filter(|label| label == MAIN || label == CHAT)
         .build(),
     )
-    .invoke_handler(tauri::generate_handler![open_link, set_badge, notify])
+    .invoke_handler(tauri::generate_handler![
+      open_link,
+      set_badge,
+      notify,
+      location::get_location,
+      location::location_permission
+    ])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -116,8 +138,10 @@ fn open_chat(app: &AppHandle, url: Option<Url>) {
     // Same as the main window: keep HTML5 file drop working for chat attachments on Windows.
     .disable_drag_drop_handler()
     .zoom_hotkeys_enabled(true);
-  if let Err(e) = with_handlers(builder, app).build() {
-    log::error!("opening the chat window failed: {e}");
+  match with_handlers(builder, app).build() {
+    // Windows: its own taskbar button gets the current count overlay.
+    Ok(_) => apply_badge(app),
+    Err(e) => log::error!("opening the chat window failed: {e}"),
   }
 }
 
@@ -262,14 +286,96 @@ async fn notify(app: AppHandle, title: String, body: String, tag: String) {
 /// error there); the tray tooltip carries the count on every OS.
 #[tauri::command]
 fn set_badge(app: AppHandle, count: u32) {
+  BADGE.store(count, Ordering::Relaxed);
+  apply_badge(&app);
   let count = (count > 0).then_some(i64::from(count));
-  if let Some(window) = app.get_webview_window(MAIN) {
-    let _ = window.set_badge_count(count);
-  }
   if let Some(tray) = app.tray_by_id(MAIN) {
     let tooltip = count.map_or_else(|| "AMS".to_string(), |n| format!("AMS ({n})"));
     let _ = tray.set_tooltip(Some(tooltip));
   }
+}
+
+/// The last count from the page: the chat window, opened later, gets it too (Windows overlay).
+static BADGE: AtomicU32 = AtomicU32::new(0);
+
+/// macOS: the Dock badge (app-wide). Windows: no badge API; each taskbar button (main, chat) gets the
+/// count drawn as its overlay icon.
+fn apply_badge(app: &AppHandle) {
+  let count = BADGE.load(Ordering::Relaxed);
+  #[cfg(windows)]
+  for label in [MAIN, CHAT] {
+    if let Some(window) = app.get_webview_window(label) {
+      let _ = window.set_overlay_icon((count > 0).then(|| badge_icon(count)));
+    }
+  }
+  #[cfg(not(windows))]
+  if let Some(window) = app.get_webview_window(MAIN) {
+    let _ = window.set_badge_count((count > 0).then_some(i64::from(count)));
+  }
+}
+
+/// Windows taskbar overlay: a red dot with the count in white, "99+" above 99. 32 px, drawn with a
+/// 3×5 pixel font (no font or image crate needed).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn badge_icon(count: u32) -> tauri::image::Image<'static> {
+  const SIZE: usize = 32;
+  // Rows of 3 bits, top to bottom: digits 0-9, then "+".
+  const GLYPHS: [[u8; 5]; 11] = [
+    [0b111, 0b101, 0b101, 0b101, 0b111],
+    [0b010, 0b110, 0b010, 0b010, 0b111],
+    [0b111, 0b001, 0b111, 0b100, 0b111],
+    [0b111, 0b001, 0b111, 0b001, 0b111],
+    [0b101, 0b101, 0b111, 0b001, 0b001],
+    [0b111, 0b100, 0b111, 0b001, 0b111],
+    [0b111, 0b100, 0b111, 0b101, 0b111],
+    [0b111, 0b001, 0b001, 0b001, 0b001],
+    [0b111, 0b101, 0b111, 0b101, 0b111],
+    [0b111, 0b101, 0b111, 0b001, 0b111],
+    [0b000, 0b010, 0b111, 0b010, 0b000],
+  ];
+  let text: Vec<usize> = if count > 99 {
+    vec![9, 9, 10]
+  } else {
+    count.to_string().bytes().map(|b| usize::from(b - b'0')).collect()
+  };
+  let scale = match text.len() {
+    1 => 4,
+    2 => 3,
+    _ => 2,
+  };
+  let mut rgba = vec![0u8; SIZE * SIZE * 4];
+  let center = (SIZE as f32 - 1.0) / 2.0;
+  let radius = SIZE as f32 / 2.0;
+  for y in 0..SIZE {
+    for x in 0..SIZE {
+      let distance = ((x as f32 - center).powi(2) + (y as f32 - center).powi(2)).sqrt();
+      let alpha = (radius - distance).clamp(0.0, 1.0);
+      if alpha > 0.0 {
+        let i = (y * SIZE + x) * 4;
+        rgba[i..i + 4].copy_from_slice(&[0xE5, 0x39, 0x35, (alpha * 255.0) as u8]);
+      }
+    }
+  }
+  let gap = scale;
+  let width = text.len() * 3 * scale + (text.len() - 1) * gap;
+  let (left, top) = ((SIZE - width) / 2, (SIZE - 5 * scale) / 2);
+  for (k, &glyph) in text.iter().enumerate() {
+    let glyph_left = left + k * (3 * scale + gap);
+    for (row, bits) in GLYPHS[glyph].iter().enumerate() {
+      for col in 0..3 {
+        if (bits >> (2 - col)) & 1 == 0 {
+          continue;
+        }
+        for dy in 0..scale {
+          for dx in 0..scale {
+            let i = ((top + row * scale + dy) * SIZE + glyph_left + col * scale + dx) * 4;
+            rgba[i..i + 4].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
+          }
+        }
+      }
+    }
+  }
+  tauri::image::Image::new_owned(rgba, SIZE as u32, SIZE as u32)
 }
 
 /// Called by LINK_SCRIPT: the same routing as `open_new_window`, minus window.opener (the FE links
@@ -299,7 +405,16 @@ fn with_handlers<'a>(builder: WindowBuilder<'a>, app: &AppHandle) -> WindowBuild
   let builder = builder
     .initialization_script(DESKTOP_SCRIPT)
     .initialization_script(LINK_SCRIPT)
+    // Windows (WebView2): AMS pages get location (attendance check-in) without WebView2's own prompt;
+    // Windows still applies its Location privacy setting. macOS never reaches here (wry does not
+    // forward geolocation there): GEO_SCRIPT + location.rs answer instead.
+    .on_permission_request(|webview, kind| match kind {
+      PermissionKind::Geolocation if webview.url().is_ok_and(|url| is_app_url(&url)) => PermissionResponse::Allow,
+      _ => PermissionResponse::Default,
+    })
     .on_new_window(move |url, features| open_new_window(&app, url, features));
+  #[cfg(target_os = "macos")]
+  let builder = builder.initialization_script(location::GEO_SCRIPT);
   // WKWebView cancels every download unless a handler exists (wry then saves to ~/Downloads).
   // Windows keeps WebView2's own download flyout, which a handler would hide.
   #[cfg(target_os = "macos")]
