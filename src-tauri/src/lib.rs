@@ -41,6 +41,7 @@ pub fn run() {
         .with_filter(|label| label == MAIN || label == CHAT)
         .build(),
     )
+    .invoke_handler(tauri::generate_handler![open_link])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -140,9 +141,67 @@ fn build_main_window(app: &AppHandle) -> tauri::Result<()> {
   Ok(())
 }
 
+/// WKWebView never reports `<a target="_blank" rel="noopener">` (the FE sidebar Chat link) to
+/// `on_new_window`: the click is dropped silently. This script catches such clicks, and chat
+/// `window.open` calls, and hands them to `open_link`. Without IPC the page navigates in place.
+const LINK_SCRIPT: &str = r#"(() => {
+  const isChat = (u) => u.origin === location.origin && (u.pathname === "/chat" || u.pathname.startsWith("/chat/"));
+  const openLink = (href) => {
+    const ipc = window.__TAURI_INTERNALS__;
+    if (!ipc) { location.assign(href); return; }
+    ipc.invoke("open_link", { url: href }).catch(() => location.assign(href));
+  };
+  document.addEventListener("click", (e) => {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const a = e.target instanceof Element ? e.target.closest('a[target="_blank"]') : null;
+    if (!a || !a.href || a.hasAttribute("download")) return;
+    let url;
+    try { url = new URL(a.href, location.href); } catch { return; }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return; // blob: stays with on_new_window
+    e.preventDefault();
+    openLink(url.href);
+  }, true);
+  const nativeOpen = window.open;
+  window.open = function (href, ...rest) {
+    try {
+      const url = new URL(String(href ?? ""), location.href);
+      if (isChat(url)) {
+        if (isChat(new URL(location.href))) { location.assign(url.href); return window; }
+        openLink(url.href);
+        return null;
+      }
+    } catch {}
+    return nativeOpen.call(window, href, ...rest);
+  };
+})();"#;
+
+/// Called by LINK_SCRIPT: the same routing as `open_new_window`, minus window.opener (the FE links
+/// it covers are noopener). async: building a window inside a sync command deadlocks on Windows.
+#[tauri::command]
+async fn open_link(app: AppHandle, url: String) -> Result<(), String> {
+  let url: Url = url.parse().map_err(|e| format!("{e}"))?;
+  if !is_app_url(&url) {
+    return app.opener().open_url(url.as_str(), None::<&str>).map_err(|e| e.to_string());
+  }
+  if is_chat_url(&app, &url) {
+    open_chat(&app, Some(url));
+    return Ok(());
+  }
+  let label = format!("{POPUP_PREFIX}{}", POPUP_SEQ.fetch_add(1, Ordering::Relaxed));
+  let builder = WebviewWindowBuilder::new(&app, label, WebviewUrl::External(url))
+    .title("AMS")
+    .inner_size(1100.0, 800.0)
+    .on_document_title_changed(|window, title| {
+      let _ = window.set_title(&title);
+    });
+  with_handlers(builder, &app).build().map(|_| ()).map_err(|e| e.to_string())
+}
+
 fn with_handlers<'a>(builder: WindowBuilder<'a>, app: &AppHandle) -> WindowBuilder<'a> {
   let app = app.clone();
-  let builder = builder.on_new_window(move |url, features| open_new_window(&app, url, features));
+  let builder = builder
+    .initialization_script(LINK_SCRIPT)
+    .on_new_window(move |url, features| open_new_window(&app, url, features));
   // WKWebView cancels every download unless a handler exists (wry then saves to ~/Downloads).
   // Windows keeps WebView2's own download flyout, which a handler would hide.
   #[cfg(target_os = "macos")]
