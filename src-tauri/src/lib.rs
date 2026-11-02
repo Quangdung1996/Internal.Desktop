@@ -41,7 +41,7 @@ pub fn run() {
         .with_filter(|label| label == MAIN || label == CHAT)
         .build(),
     )
-    .invoke_handler(tauri::generate_handler![open_link])
+    .invoke_handler(tauri::generate_handler![open_link, set_badge])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -175,6 +175,33 @@ const LINK_SCRIPT: &str = r#"(() => {
   };
 })();"#;
 
+/// `window.desktopApp` is the FE's "running in the desktop app" flag: absent in a browser, so FE code
+/// behind `window.desktopApp?.` never runs on the web.
+const DESKTOP_SCRIPT: &str = r#"(() => {
+  if (window.desktopApp) return;
+  const invoke = (cmd, args) => window.__TAURI_INTERNALS__?.invoke(cmd, args).catch(() => {});
+  Object.defineProperty(window, "desktopApp", {
+    value: Object.freeze({
+      /** Dock (macOS) / tray tooltip count; 0 clears it. */
+      setBadge: (count) => invoke("set_badge", { count: Math.max(0, Math.floor(Number(count) || 0)) }),
+    }),
+  });
+})();"#;
+
+/// Called by `window.desktopApp.setBadge`. Windows has no badge API (`set_badge_count` is a no-op
+/// error there); the tray tooltip carries the count on every OS.
+#[tauri::command]
+fn set_badge(app: AppHandle, count: u32) {
+  let count = (count > 0).then_some(i64::from(count));
+  if let Some(window) = app.get_webview_window(MAIN) {
+    let _ = window.set_badge_count(count);
+  }
+  if let Some(tray) = app.tray_by_id(MAIN) {
+    let tooltip = count.map_or_else(|| "AMS".to_string(), |n| format!("AMS ({n})"));
+    let _ = tray.set_tooltip(Some(tooltip));
+  }
+}
+
 /// Called by LINK_SCRIPT: the same routing as `open_new_window`, minus window.opener (the FE links
 /// it covers are noopener). async: building a window inside a sync command deadlocks on Windows.
 #[tauri::command]
@@ -200,6 +227,7 @@ async fn open_link(app: AppHandle, url: String) -> Result<(), String> {
 fn with_handlers<'a>(builder: WindowBuilder<'a>, app: &AppHandle) -> WindowBuilder<'a> {
   let app = app.clone();
   let builder = builder
+    .initialization_script(DESKTOP_SCRIPT)
     .initialization_script(LINK_SCRIPT)
     .on_new_window(move |url, features| open_new_window(&app, url, features));
   // WKWebView cancels every download unless a handler exists (wry then saves to ~/Downloads).
