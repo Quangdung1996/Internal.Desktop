@@ -236,8 +236,8 @@ pub async fn get_location(app: AppHandle, timeout_ms: Option<u64>) -> Result<Fix
     .map_err(|e| format!("unavailable: {e}"))?;
   let page_timeout = Duration::from_millis(timeout_ms.unwrap_or(15_000).clamp(1_000, 60_000));
   let outcome = tauri::async_runtime::spawn_blocking(move || {
-    let prompting = prompting.recv().unwrap_or(false);
-    let wait = if prompting { page_timeout + Duration::from_secs(60) } else { page_timeout };
+    let prompting = prompting.recv_timeout(Duration::from_secs(5)).unwrap_or(false);
+    let wait = if prompting { page_timeout + Duration::from_secs(30) } else { page_timeout };
     result.recv_timeout(wait)
   })
   .await
