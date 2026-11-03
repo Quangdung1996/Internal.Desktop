@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cài đặt</title>
 <!-- The desktop app's own settings window (src/settings.rs), bundled in the binary: no AMS site,
-     no network. A new setting = a .row here + a field in get_settings + a set_* command. -->
+     no network. An on/off setting = a checkbox with data-setting="<Prefs field, camelCase>" in a
+     panel + the field in Prefs; the generic handler below saves it. -->
 <style>
   :root {
     color-scheme: light dark;
@@ -15,8 +16,11 @@
     --line: #d2d2d7;
     --tab-hover: rgba(0, 0, 0, 0.05);
     --tab-active: rgba(0, 0, 0, 0.09);
+    --button: #ffffff;
+    --button-border: #c7c7cc;
     --accent: #0a84ff;
     --danger: #d70015;
+    --ok: #1f8a3b;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -26,7 +30,10 @@
       --line: #3d3d40;
       --tab-hover: rgba(255, 255, 255, 0.06);
       --tab-active: rgba(255, 255, 255, 0.11);
+      --button: #4a4a4d;
+      --button-border: #5a5a5e;
       --danger: #ff453a;
+      --ok: #32d74b;
     }
   }
   * { box-sizing: border-box; }
@@ -54,7 +61,7 @@
     flex-direction: column;
     align-items: center;
     gap: 3px;
-    min-width: 76px;
+    min-width: 80px;
     padding: 6px 10px;
     border: 0;
     border-radius: 7px;
@@ -64,9 +71,9 @@
   }
   nav button:hover { background: var(--tab-hover); }
   nav button[aria-selected="true"] { background: var(--tab-active); color: var(--text); }
-  nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  nav button:focus-visible, .button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   nav svg { width: 26px; height: 26px; }
-  main { flex: 1; padding: 22px 32px; }
+  main { flex: 1; padding: 20px 32px; }
   .row {
     display: grid;
     grid-template-columns: 150px 1fr;
@@ -75,10 +82,26 @@
     padding: 6px 0;
   }
   .row > .label { text-align: right; padding-top: 1px; }
+  .row + .row { margin-top: 4px; }
   .check { display: inline-flex; align-items: center; gap: 8px; }
   .check input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
+  .check:has(input:disabled) { color: var(--muted); }
   .hint { margin: 3px 0 0 23px; color: var(--muted); font-size: 11.5px; }
+  .hint.flush { margin-left: 0; }
   .error { margin: 3px 0 0 23px; color: var(--danger); font-size: 11.5px; }
+  .status { margin: 6px 0 0; font-size: 11.5px; color: var(--muted); }
+  .status.ok { color: var(--ok); }
+  .status.error { color: var(--danger); }
+  .button {
+    margin-top: 8px;
+    padding: 4px 14px;
+    border: 1px solid var(--button-border);
+    border-radius: 6px;
+    background: var(--button);
+    color: var(--text);
+    font: inherit;
+  }
+  .button:disabled { opacity: 0.6; }
   footer {
     padding: 10px 16px 14px;
     text-align: center;
@@ -96,6 +119,20 @@
       </svg>
       Chung
     </button>
+    <button type="button" role="tab" id="tab-notifications" aria-selected="false" aria-controls="panel-notifications" tabindex="-1">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/>
+        <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>
+      </svg>
+      Thông báo
+    </button>
+    <button type="button" role="tab" id="tab-updates" aria-selected="false" aria-controls="panel-updates" tabindex="-1">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+        <path d="M21 3v6h-6"/>
+      </svg>
+      Cập nhật
+    </button>
   </nav>
 
   <main>
@@ -108,10 +145,49 @@
             Khởi động cùng máy
           </label>
           <p class="hint">AMS tự mở khi bạn đăng nhập máy tính, để không bỏ lỡ tin nhắn và thông báo.</p>
-          <p class="error" id="autostart-error" role="alert" hidden></p>
+          <label class="check" style="margin-top: 8px">
+            <input type="checkbox" data-setting="startHidden" disabled>
+            Mở ẩn dưới khay hệ thống
+          </label>
+          <p class="hint">Khi tự mở cùng máy, AMS chạy ngầm và vẫn nhận thông báo, không bật cửa sổ lên.</p>
         </div>
       </div>
     </section>
+
+    <section role="tabpanel" id="panel-notifications" aria-labelledby="tab-notifications" hidden>
+      <div class="row">
+        <span class="label">Thông báo:</span>
+        <div>
+          <label class="check">
+            <input type="checkbox" data-setting="notificationSound" disabled>
+            Phát âm thanh
+          </label>
+          <p class="hint">Tắt để chỉ hiện thông báo mà không phát tiếng, ví dụ khi đang họp.</p>
+          <label class="check" style="margin-top: 8px">
+            <input type="checkbox" data-setting="notificationPreview" disabled>
+            Hiện nội dung tin nhắn
+          </label>
+          <p class="hint">Tắt để thông báo chỉ ghi người gửi và "Có tin nhắn mới", tránh lộ nội dung khi chia sẻ màn hình.</p>
+        </div>
+      </div>
+    </section>
+
+    <section role="tabpanel" id="panel-updates" aria-labelledby="tab-updates" hidden>
+      <div class="row">
+        <span class="label">Cập nhật:</span>
+        <div>
+          <label class="check">
+            <input type="checkbox" data-setting="autoUpdate" disabled>
+            Tự động kiểm tra cập nhật
+          </label>
+          <p class="hint">Kiểm tra khi mở AMS và mỗi 6 giờ. Có bản mới thì AMS hỏi trước khi cài.</p>
+          <button type="button" class="button" id="check-update">Kiểm tra ngay</button>
+          <p class="status" id="update-status" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+    </section>
+
+    <p class="error" id="load-error" role="alert" hidden></p>
   </main>
 
   <footer id="version"></footer>
@@ -119,32 +195,95 @@
 <script>
 (() => {
   const ipc = window.__TAURI_INTERNALS__;
-  const autostart = document.getElementById("autostart");
-  const autostartError = document.getElementById("autostart-error");
-  const version = document.getElementById("version");
+  const $ = (id) => document.getElementById(id);
+  const autostart = $("autostart");
+  const startHidden = document.querySelector('[data-setting="startHidden"]');
+  const settingBoxes = [...document.querySelectorAll("[data-setting]")];
+
+  // Tabs: click, and ←/→ between them (the usual tablist keys).
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  const select = (tab) => {
+    for (const t of tabs) {
+      const on = t === tab;
+      t.setAttribute("aria-selected", String(on));
+      t.tabIndex = on ? 0 : -1;
+      $(t.getAttribute("aria-controls")).hidden = !on;
+    }
+    tab.focus();
+  };
+  tabs.forEach((tab, i) => {
+    tab.addEventListener("click", () => select(tab));
+    tab.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+      const step = e.key === "ArrowRight" ? 1 : -1;
+      select(tabs[(i + step + tabs.length) % tabs.length]);
+    });
+  });
 
   const showError = (el, message) => {
     el.textContent = message;
     el.hidden = false;
   };
+  // "Mở ẩn" only means something for a login launch.
+  const syncStartHidden = () => { startHidden.disabled = !autostart.checked; };
 
   ipc.invoke("get_settings").then((settings) => {
     autostart.checked = settings.autostart;
     autostart.disabled = false;
-    version.textContent = `AMS phiên bản ${settings.version}`;
-  }, (reason) => showError(autostartError, `Không đọc được cài đặt: ${reason}`));
+    for (const box of settingBoxes) {
+      box.checked = Boolean(settings[box.dataset.setting]);
+      box.disabled = false;
+    }
+    syncStartHidden();
+    $("version").textContent = `AMS phiên bản ${settings.version}`;
+  }, (reason) => showError($("load-error"), `Không đọc được cài đặt: ${reason}`));
 
   autostart.addEventListener("change", () => {
     const wanted = autostart.checked;
     autostart.disabled = true;
-    autostartError.hidden = true;
     ipc.invoke("set_autostart", { enabled: wanted })
       .then((actual) => { autostart.checked = actual; })
       .catch((reason) => {
         autostart.checked = !wanted;
-        showError(autostartError, `Không đổi được: ${reason}`);
+        showError($("load-error"), `Không đổi được "Khởi động cùng máy": ${reason}`);
       })
-      .finally(() => { autostart.disabled = false; });
+      .finally(() => { autostart.disabled = false; syncStartHidden(); });
+  });
+
+  for (const box of settingBoxes) {
+    box.addEventListener("change", () => {
+      const value = box.checked;
+      box.disabled = true;
+      ipc.invoke("set_setting", { key: box.dataset.setting, value })
+        .catch((reason) => {
+          box.checked = !value;
+          showError($("load-error"), `Không lưu được cài đặt: ${reason}`);
+        })
+        .finally(() => {
+          box.disabled = false;
+          if (box === startHidden) syncStartHidden();
+        });
+    });
+  }
+
+  const checkButton = $("check-update");
+  const updateStatus = $("update-status");
+  checkButton.addEventListener("click", () => {
+    checkButton.disabled = true;
+    updateStatus.className = "status";
+    updateStatus.textContent = "Đang kiểm tra…";
+    ipc.invoke("check_update")
+      .then(({ available }) => {
+        updateStatus.className = "status ok";
+        updateStatus.textContent = available
+          ? `Có phiên bản ${available}. Xem hộp thoại để cập nhật.`
+          : "Bạn đang dùng phiên bản mới nhất.";
+      })
+      .catch((reason) => {
+        updateStatus.className = "status error";
+        updateStatus.textContent = `Không kiểm tra được: ${reason}`;
+      })
+      .finally(() => { checkButton.disabled = false; });
   });
 })();
 </script>

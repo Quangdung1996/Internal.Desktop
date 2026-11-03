@@ -28,7 +28,7 @@ use tauri::{
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_opener::OpenerExt;
-use tauri_plugin_updater::UpdaterExt;
+use tauri_plugin_updater::{Update, UpdaterExt};
 use tauri_plugin_window_state::StateFlags;
 
 const MAIN: &str = "main";
@@ -53,7 +53,8 @@ pub fn run() {
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
-    .plugin(tauri_plugin_autostart::Builder::new().build())
+    // macOS LaunchAgent / Windows Run key; the flag lets a login launch start hidden (Settings).
+    .plugin(tauri_plugin_autostart::Builder::new().args([settings::AUTOSTART_ARG]).build())
     .plugin(
       tauri_plugin_window_state::Builder::default()
         // No VISIBLE flag: quitting from the tray while hidden must not start the next launch hidden.
@@ -68,7 +69,9 @@ pub fn run() {
       location::get_location,
       location::location_permission,
       settings::get_settings,
-      settings::set_autostart
+      settings::set_autostart,
+      settings::set_setting,
+      settings::check_update
     ])
     .register_uri_scheme_protocol(settings::PROTOCOL, |_ctx, request| settings::serve(&request))
     .on_menu_event(|app, event| on_menu(app, event.id.as_ref()))
@@ -79,10 +82,16 @@ pub fn run() {
             .level(log::LevelFilter::Info)
             .build(),
         )?;
-      } else {
+      }
+      app.manage(settings::load(app.handle()));
+      if !cfg!(debug_assertions) {
+        // Release only: a dev run must not repoint the autostart entry at the dev binary.
+        settings::refresh_autostart(app.handle());
         spawn_updater(app.handle().clone());
       }
-      build_main_window(app.handle())?;
+      // Settings ▸ "Mở ẩn": a login launch stays in the tray (macOS Dock click / tray opens it).
+      let hidden = settings::launched_by_autostart() && settings::prefs(app.handle()).start_hidden;
+      build_main_window(app.handle(), !hidden)?;
       #[cfg(target_os = "macos")]
       setup_app_menu(app.handle())?;
       setup_tray(app.handle())?;
@@ -163,7 +172,7 @@ fn is_chat_url(app: &AppHandle, url: &Url) -> bool {
 }
 
 /// Built here instead of from tauri.conf.json ("create": false) to attach the popup and download handlers.
-fn build_main_window(app: &AppHandle) -> tauri::Result<()> {
+fn build_main_window(app: &AppHandle, visible: bool) -> tauri::Result<()> {
   let config = app
     .config()
     .app
@@ -171,7 +180,9 @@ fn build_main_window(app: &AppHandle) -> tauri::Result<()> {
     .iter()
     .find(|w| w.label == MAIN)
     .expect("main window declared in tauri.conf.json");
-  with_handlers(WebviewWindowBuilder::from_config(app, config)?, app).build()?;
+  // Hidden or not, the page loads: chat, notifications and the badge run from it.
+  let builder = WebviewWindowBuilder::from_config(app, config)?.visible(visible);
+  with_handlers(builder, app).build()?;
   Ok(())
 }
 
@@ -272,8 +283,14 @@ async fn notify(app: AppHandle, title: String, body: String, tag: String) {
   if is_duplicate(format!("{tag}\u{1f}{title}\u{1f}{body}")) {
     return;
   }
+  // Settings ▸ Thông báo. The title (who wrote, which room) stays; only the message text is hidden.
+  let prefs = settings::prefs(&app);
+  let body = if prefs.notification_preview || body.is_empty() { body } else { "Có tin nhắn mới".to_string() };
   let mut builder = app.notification().builder().title(&title).body(&body);
-  if let Some(sound) = NOTIFICATION_SOUND {
+  // No sound name = silent on both OSes (Windows marks the toast silent).
+  if prefs.notification_sound
+    && let Some(sound) = NOTIFICATION_SOUND
+  {
     builder = builder.sound(sound);
   }
   if let Err(e) = builder.show() {
@@ -530,31 +547,42 @@ fn setup_app_menu(app: &AppHandle) -> tauri::Result<()> {
   Ok(())
 }
 
+/// Settings ▸ Cập nhật ▸ "Tự động kiểm tra cập nhật" is read on every round, so turning it off or on
+/// takes effect at the next check without a restart.
 fn spawn_updater(app: AppHandle) {
   std::thread::spawn(move || {
     loop {
-      if let Err(e) = tauri::async_runtime::block_on(update(&app)) {
-        log::error!("update check failed: {e}");
+      if settings::prefs(&app).auto_update {
+        match tauri::async_runtime::block_on(find_update(&app)) {
+          Ok(Some(update)) => offer_update(&app, update),
+          Ok(None) => {}
+          Err(e) => log::error!("update check failed: {e}"),
+        }
       }
       std::thread::sleep(UPDATE_EVERY);
     }
   });
 }
 
-/// Asks first: installing restarts the app (on Windows the installer closes it).
-async fn update(app: &AppHandle) -> tauri_plugin_updater::Result<()> {
-  let Some(update) = app.updater()?.check().await? else {
-    return Ok(());
-  };
+/// A newer published release, if any (also "Kiểm tra ngay" in Settings).
+pub(crate) async fn find_update(app: &AppHandle) -> tauri_plugin_updater::Result<Option<Update>> {
+  app.updater()?.check().await
+}
+
+/// Asks first: installing restarts the app (on Windows the installer closes it). Blocks on the
+/// dialog: call it from a plain thread, never from the main thread or an async task.
+pub(crate) fn offer_update(app: &AppHandle, update: Update) {
   let accepted = app
     .dialog()
     .message(format!("Đã có AMS phiên bản {}. Cập nhật và khởi động lại ngay?", update.version))
     .title("Cập nhật AMS")
     .buttons(MessageDialogButtons::OkCancelCustom("Cập nhật".into(), "Để sau".into()))
     .blocking_show();
-  if accepted {
-    update.download_and_install(|_, _| {}, || {}).await?;
-    app.restart();
+  if !accepted {
+    return;
   }
-  Ok(())
+  match tauri::async_runtime::block_on(update.download_and_install(|_, _| {}, || {})) {
+    Ok(()) => app.restart(),
+    Err(e) => log::error!("installing the update failed: {e}"),
+  }
 }
