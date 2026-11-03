@@ -3,8 +3,8 @@
 # in the PUBLIC repo Quangdung1996/ams-desktop-releases: it holds only a README and the releases, so
 # this repo (the code) stays private while the updater downloads anonymously. The tag there points
 # at that repo's own README commit (releaseCommitish), never at code from here.
-# Installed apps auto-update only after that draft is published (releases/latest skips drafts),
-# so publishing the draft is the release gate.
+# The `publish` job publishes that draft once BOTH builds succeeded (installed apps see only
+# published releases: releases/latest skips drafts); if one fails it stays a draft.
 # Based on https://v2.tauri.app/distribute/pipelines/github/ ; manual trigger so a release is a decision,
 # not a side effect of every push.
 name: build
@@ -99,3 +99,20 @@ jobs:
           uploadWorkflowArtifacts: true
           # Fallback key windows-x86_64 (installs that predate per-installer keys) -> NSIS, no UAC prompt.
           updaterJsonPreferNsis: true
+
+  # Publishes only when every build job succeeded, so latest.json always has macOS and Windows.
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          # Same version as the Version step of the build jobs.
+          version=$(node -p 'require("./src-tauri/tauri.conf.json").version.split(".").slice(0, 2).join(".")').$GITHUB_RUN_NUMBER
+          gh release edit "app-v$version" -R Quangdung1996/ams-desktop-releases --draft=false --latest
+          echo "Published app-v$version"

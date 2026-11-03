@@ -29,7 +29,8 @@ to install). Only shell changes (this repo) need a new desktop release, delivere
 1. Version is automatic: `<major.minor of src-tauri/tauri.conf.json>.<workflow run number>` (e.g. 1.0.9), so
    every build is higher than the last. Big change: raise major/minor there (e.g. `2.0.0`), the patch stays the run number.
 2. GitHub → Actions → **build** → Run workflow. Windows (.exe NSIS per-user + .msi per-machine) + macOS (universal) land in a draft release `app-v<version>` of **https://github.com/Quangdung1996/ams-desktop-releases** (public: README + releases only, no code).
-3. Test the installers from the draft, then **Publish** it. Installed apps pick it up only after publishing.
+3. Nothing else: when both builds succeed, the `publish` job publishes the release and installed apps pick it up
+   (within 6 h, or Settings ▸ "Kiểm tra ngay"). If a build fails the release stays a draft: re-run the failed job.
 
 One-time setup:
 - Public repo `Quangdung1996/ams-desktop-releases`: only a README (staff install steps); Issues, Wiki, Projects off. The updater downloads `latest.json` and the installers from its releases anonymously, so this repo (the code) can be private.
