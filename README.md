@@ -22,17 +22,17 @@ to install). Only shell changes (this repo) need a new desktop release, delivere
 - Start: the main window opens on a bundled page (`src-tauri/offline.html`: logo + loading bar) that goes on to the site once it answers. Offline at launch it stays there with a "Mất kết nối internet" warning and retries every 5 s; a main/chat page that never loads within 10 s also lands there.
 - Offline while in use: the page is kept, dimmed and blurred with a "Mất kết nối internet" warning (clicks held) until the connection is back; nothing navigates.
 - macOS: downloads saved to ~/Downloads and revealed in Finder; `window.print` works (Tauri print API); camera, mic, location declared in `Info.plist` + `Entitlements.plist`.
-- Auto update: checks GitHub `releases/latest` at startup and every 6 h, asks before installing.
+- Auto update: checks `releases/latest` of `ams-desktop-releases` (then of this repo, for the move) at startup and every 6 h, asks before installing.
 
 ## Release (no local toolchain needed)
 
 1. Bump `version` in `src-tauri/tauri.conf.json` (the updater only offers a higher version).
-2. GitHub → Actions → **build** → Run workflow. Windows (.exe NSIS per-user + .msi per-machine) + macOS (universal) land in a draft release `app-v<version>`.
+2. GitHub → Actions → **build** → Run workflow. Windows (.exe NSIS per-user + .msi per-machine) + macOS (universal) land in a draft release `app-v<version>` of **https://github.com/Quangdung1996/ams-desktop-releases** (public: README + releases only, no code).
 3. Test the installers from the draft, then **Publish** it. Installed apps pick it up only after publishing.
 
-One-time repo setup:
-- Settings → General → visibility **Public** (updater downloads `latest.json` anonymously; Actions minutes are free).
-- Settings → Actions → General → Workflow permissions → **Read and write**.
+One-time setup:
+- Public repo `Quangdung1996/ams-desktop-releases`: only a README (staff install steps); Issues, Wiki, Projects off. The updater downloads `latest.json` and the installers from its releases anonymously, so this repo (the code) can be private.
+- This repo → Settings → Secrets and variables → Actions → `RELEASES_TOKEN` = fine-grained token (github.com/settings/personal-access-tokens): repository access **only** `ams-desktop-releases`, permission **Contents: Read and write**. It expires: renew it and replace the secret before then, or builds fail at upload.
 - Settings → Secrets and variables → Actions → `TAURI_SIGNING_PRIVATE_KEY` = content of the updater private key (generated with `npx tauri signer generate`, no password; public half is `plugins.updater.pubkey`). Losing that key means installed apps can never update again: keep a backup outside this machine.
 - macOS signing + notarization secrets: `APPLE_CERTIFICATE` (base64 of the Developer ID Application .p12),
   `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (`Developer ID Application: AGARI COMPANY LIMITED (ZGS2BK2B25)`),
@@ -44,7 +44,7 @@ SmartScreen → "More info" → "Run anyway".
 
 ## Install on macOS (staff)
 
-1. Download `AMS_<version>_universal.dmg` from https://github.com/Quangdung1996/Internal.Desktop/releases/latest (one file for Apple Silicon and Intel).
+1. Download `AMS_<version>_universal.dmg` from https://github.com/Quangdung1996/ams-desktop-releases/releases/latest (one file for Apple Silicon and Intel).
 2. Open the .dmg, drag **AMS** into **Applications**, eject the disk. Do not run it from the .dmg: auto update cannot replace a read-only app.
 3. Open AMS from Applications, allow **Notifications** when asked (chat alerts). If missed: System Settings → Notifications → AMS → Allow.
    Camera / microphone / location are asked the first time a page uses them; change later in Privacy & Security.

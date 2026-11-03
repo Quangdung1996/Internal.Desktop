@@ -1,5 +1,8 @@
 # Builds the Windows (NSIS .exe + MSI) and macOS (.dmg, universal) installers on GitHub runners
-# and attaches them to a draft release "app-v<version>" (version from src-tauri/tauri.conf.json).
+# and attaches them to a draft release "app-v<version>" (version from src-tauri/tauri.conf.json)
+# in the PUBLIC repo Quangdung1996/ams-desktop-releases: it holds only a README and the releases, so
+# this repo (the code) can stay private while the updater downloads anonymously. The tag there points
+# at that repo's own README commit (releaseCommitish), never at code from here.
 # Installed apps auto-update only after that draft is published (releases/latest skips drafts),
 # so publishing the draft is the release gate.
 # Based on https://v2.tauri.app/distribute/pipelines/github/ ; manual trigger so a release is a decision,
@@ -12,7 +15,7 @@ on:
 jobs:
   build:
     permissions:
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -44,7 +47,9 @@ jobs:
 
       - uses: tauri-apps/tauri-action@v1
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Fine-grained token: only ams-desktop-releases, Contents read/write (this repo's own
+          # GITHUB_TOKEN cannot write to another repo).
+          GITHUB_TOKEN: ${{ secrets.RELEASES_TOKEN }}
           # Signs the updater artifacts; must match plugins.updater.pubkey in tauri.conf.json.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
@@ -58,6 +63,9 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
+          owner: Quangdung1996
+          repo: ams-desktop-releases
+          releaseCommitish: main
           tagName: app-v__VERSION__
           releaseName: AMS v__VERSION__
           releaseBody: Download the installer for your OS from the assets below.
