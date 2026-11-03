@@ -121,10 +121,21 @@ pub fn run() {
       #[cfg(target_os = "macos")]
       mac_notify::present_in_foreground();
       // A click on a notification does what the page's onclick does (on_notification_click).
-      // ponytail: with a handler the plugin keeps one thread per notification waiting for its click
-      // until it goes away (macOS: until cleared from Notification Center); fine at chat volume.
+      // macOS: the plugin's click tracking never reports it (mac-notification-sys stops waiting
+      // after delivery), so mac_notify takes the click from the notification delegate instead, and
+      // no plugin listener is registered (it would also keep a waiting thread per notification).
+      #[cfg(target_os = "macos")]
+      mac_notify::handle_clicks(app.handle().clone());
+      // Windows: the plugin reports a click on a toast still on screen (not from the Action Center).
+      #[cfg(not(target_os = "macos"))]
       let handle = app.handle().clone();
+      #[cfg(not(target_os = "macos"))]
       app.notification().on_action(move |performed| {
+        log::info!(
+          "notification action {:?} on #{:?}",
+          performed.action_id(),
+          performed.notification().map(|n| n.id())
+        );
         if performed.action_id() == "tap" {
           on_notification_click(&handle, performed.notification().map(|n| n.id()));
         }
@@ -602,30 +613,53 @@ async fn notify(app: AppHandle, window: WebviewWindow, title: String, body: Stri
   deliver_notification(app, title, body, tag, origin).await;
 }
 
-/// Notification id → where it came from (window label, the page's clickId), so a click runs that
-/// page's onclick. Bounded: a click on an older one falls back (`on_notification_click`).
-static NOTIFICATION_ORIGINS: Mutex<Vec<(i32, String, u32)>> = Mutex::new(Vec::new());
+/// Notification id → where it came from (window label, the page's clickId) and the text it showed
+/// (`text_key`), so a click runs that page's onclick. Bounded: a click on an older one falls back
+/// (`on_notification_click`).
+static NOTIFICATION_ORIGINS: Mutex<Vec<(i32, String, u32, String)>> = Mutex::new(Vec::new());
 static NOTIFICATION_SEQ: AtomicI32 = AtomicI32::new(1);
 const NOTIFICATION_ORIGINS_KEPT: usize = 100;
 
-/// A click on a notification (registered in setup through the plugin's `on_action`). Windows reports
-/// it only while the toast is on screen, not from the Action Center.
+fn text_key(title: &str, body: &str) -> String {
+  format!("{title}\u{1f}{body}")
+}
+
+/// macOS (mac_notify): the clicked notification is known only by what it showed; the newest AMS
+/// notification with that title and text is the one.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn on_notification_click_by_text(app: &AppHandle, title: &str, body: &str) {
+  let key = text_key(title, body);
+  let id = NOTIFICATION_ORIGINS
+    .lock()
+    .unwrap_or_else(|e| e.into_inner())
+    .iter()
+    .rev()
+    .find(|(_, _, _, k)| *k == key)
+    .map(|(id, _, _, _)| *id);
+  on_notification_click(app, id);
+}
+
+/// A click on a notification: Windows through the plugin's `on_action` (only while the toast is on
+/// screen, not from the Action Center), macOS through `on_notification_click_by_text`.
 fn on_notification_click(app: &AppHandle, id: Option<i32>) {
   let origin = id.and_then(|id| {
     let mut origins = NOTIFICATION_ORIGINS.lock().unwrap_or_else(|e| e.into_inner());
-    let at = origins.iter().position(|(n, _, _)| *n == id)?;
-    let (_, label, click_id) = origins.remove(at);
+    let at = origins.iter().position(|(n, _, _, _)| *n == id)?;
+    let (_, label, click_id, _) = origins.remove(at);
     Some((label, click_id))
   });
   // Settings ▸ "Gửi thông báo thử", or one too old to remember.
   let Some((label, click_id)) = origin else {
+    log::info!("notification #{id:?} clicked: no origin kept, showing the main window");
     show_main(app);
     return;
   };
   let Some(window) = app.get_webview_window(&label) else {
+    log::info!("notification #{id:?} clicked: window {label} is gone, opening the chat");
     open_chat(app, None);
     return;
   };
+  log::info!("notification #{id:?} clicked: running onclick {click_id} in {label}");
   // The chat page only switches rooms in place: bring its window up. The main window's onclick opens
   // the chat window itself (window.open → open_chat), so a hidden main window stays hidden.
   if label != MAIN {
@@ -648,7 +682,7 @@ pub(crate) async fn deliver_notification(app: AppHandle, title: String, body: St
     if origins.len() >= NOTIFICATION_ORIGINS_KEPT {
       origins.remove(0);
     }
-    origins.push((id, label, click_id));
+    origins.push((id, label, click_id, text_key(&title, &body)));
   }
   let mut builder = app.notification().builder().id(id).title(&title).body(&body);
   // No sound name = silent on both OSes (Windows marks the toast silent).
@@ -657,6 +691,8 @@ pub(crate) async fn deliver_notification(app: AppHandle, title: String, body: St
   {
     builder = builder.sound(sound);
   }
+  // Ids only, never the text (the log goes to IT).
+  log::info!("notification #{id} shown");
   if let Err(e) = builder.show() {
     log::error!("showing a notification failed: {e}");
   }
