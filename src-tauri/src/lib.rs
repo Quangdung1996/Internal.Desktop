@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+#[cfg(target_os = "macos")]
+use tauri::menu::{AboutMetadata, HELP_SUBMENU_ID};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tauri::webview::{NewWindowFeatures, NewWindowResponse, PermissionKind, PermissionResponse};
 
@@ -11,6 +13,7 @@ mod location;
 #[cfg(target_os = "macos")]
 mod mac_notify;
 mod settings;
+mod title_bar;
 /// Windows / Linux: the webview's own geolocation (see `on_permission_request`); GEO_SCRIPT, the only
 /// caller of these, is injected on macOS only.
 #[cfg(not(target_os = "macos"))]
@@ -64,6 +67,8 @@ pub fn run() {
         .with_filter(|label| label == MAIN || label == CHAT)
         .build(),
     )
+    // Brand-teal title bar on every window (title_bar.rs).
+    .plugin(tauri::plugin::Builder::new("title-bar").on_window_ready(title_bar::paint).build())
     .invoke_handler(tauri::generate_handler![
       open_link,
       set_badge,
@@ -115,6 +120,13 @@ pub fn run() {
       {
         if settings::prefs(window.app_handle()).close_to_tray {
           api.prevent_close();
+          // macOS: hiding a fullscreen window leaves its Space open and black. Hide the app instead
+          // (⌘H): macOS then leaves the Space as for any app; bring_forward unhides it.
+          #[cfg(target_os = "macos")]
+          if window.is_fullscreen().unwrap_or(false) {
+            let _ = window.app_handle().hide();
+            return;
+          }
           let _ = window.hide();
         } else {
           window.app_handle().exit(0);
@@ -141,6 +153,9 @@ fn show_main(app: &AppHandle) {
 }
 
 fn bring_forward(window: &WebviewWindow) {
+  // Undoes the app-level hide used when closing a fullscreen window (on_window_event).
+  #[cfg(target_os = "macos")]
+  let _ = window.app_handle().show();
   let _ = window.unminimize();
   let _ = window.show();
   let _ = window.set_focus();
@@ -562,6 +577,17 @@ fn setup_app_menu(app: &AppHandle) -> tauri::Result<()> {
   if let Some(app_menu) = menu.items()?.first().and_then(|item| item.as_submenu().cloned()) {
     let settings = MenuItem::with_id(app, SETTINGS_MENU, "Cài đặt…", true, Some("CmdOrCtrl+,"))?;
     app_menu.insert_items(&[&settings, &PredefinedMenuItem::separator(app)?], 2)?;
+  }
+  // Help (empty in the default menu): the version at a glance + the standard About panel.
+  if let Some(help) = menu.get(HELP_SUBMENU_ID).and_then(|item| item.as_submenu().cloned()) {
+    let info = app.package_info();
+    let version = info.version.to_string();
+    let about = AboutMetadata { name: Some(info.name.clone()), version: Some(version.clone()), ..Default::default() };
+    help.append_items(&[
+      &MenuItem::new(app, format!("Phiên bản {version}"), false, None::<&str>)?,
+      &PredefinedMenuItem::separator(app)?,
+      &PredefinedMenuItem::about(app, Some("Giới thiệu AMS"), Some(about))?,
+    ])?;
   }
   app.set_menu(menu)?;
   Ok(())
