@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cài đặt</title>
+<!-- The desktop app's own settings window (src/settings.rs), bundled in the binary: no AMS site,
+     no network. A new setting = a .row here + a field in get_settings + a set_* command. -->
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ececec;
+    --text: #1d1d1f;
+    --muted: #6e6e73;
+    --line: #d2d2d7;
+    --tab-hover: rgba(0, 0, 0, 0.05);
+    --tab-active: rgba(0, 0, 0, 0.09);
+    --accent: #0a84ff;
+    --danger: #d70015;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #2b2b2d;
+      --text: #f5f5f7;
+      --muted: #98989d;
+      --line: #3d3d40;
+      --tab-hover: rgba(255, 255, 255, 0.06);
+      --tab-active: rgba(255, 255, 255, 0.11);
+      --danger: #ff453a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+  }
+  nav {
+    display: flex;
+    justify-content: center;
+    gap: 4px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  nav button {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    min-width: 76px;
+    padding: 6px 10px;
+    border: 0;
+    border-radius: 7px;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+  }
+  nav button:hover { background: var(--tab-hover); }
+  nav button[aria-selected="true"] { background: var(--tab-active); color: var(--text); }
+  nav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  nav svg { width: 26px; height: 26px; }
+  main { flex: 1; padding: 22px 32px; }
+  .row {
+    display: grid;
+    grid-template-columns: 150px 1fr;
+    column-gap: 12px;
+    align-items: start;
+    padding: 6px 0;
+  }
+  .row > .label { text-align: right; padding-top: 1px; }
+  .check { display: inline-flex; align-items: center; gap: 8px; }
+  .check input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
+  .hint { margin: 3px 0 0 23px; color: var(--muted); font-size: 11.5px; }
+  .error { margin: 3px 0 0 23px; color: var(--danger); font-size: 11.5px; }
+  footer {
+    padding: 10px 16px 14px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 11.5px;
+  }
+</style>
+</head>
+<body>
+  <nav role="tablist" aria-label="Cài đặt">
+    <button type="button" role="tab" id="tab-general" aria-selected="true" aria-controls="panel-general">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>
+      </svg>
+      Chung
+    </button>
+  </nav>
+
+  <main>
+    <section role="tabpanel" id="panel-general" aria-labelledby="tab-general">
+      <div class="row">
+        <span class="label">Khởi động:</span>
+        <div>
+          <label class="check">
+            <input type="checkbox" id="autostart" disabled>
+            Khởi động cùng máy
+          </label>
+          <p class="hint">AMS tự mở khi bạn đăng nhập máy tính, để không bỏ lỡ tin nhắn và thông báo.</p>
+          <p class="error" id="autostart-error" role="alert" hidden></p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer id="version"></footer>
+
+<script>
+(() => {
+  const ipc = window.__TAURI_INTERNALS__;
+  const autostart = document.getElementById("autostart");
+  const autostartError = document.getElementById("autostart-error");
+  const version = document.getElementById("version");
+
+  const showError = (el, message) => {
+    el.textContent = message;
+    el.hidden = false;
+  };
+
+  ipc.invoke("get_settings").then((settings) => {
+    autostart.checked = settings.autostart;
+    autostart.disabled = false;
+    version.textContent = `AMS phiên bản ${settings.version}`;
+  }, (reason) => showError(autostartError, `Không đọc được cài đặt: ${reason}`));
+
+  autostart.addEventListener("change", () => {
+    const wanted = autostart.checked;
+    autostart.disabled = true;
+    autostartError.hidden = true;
+    ipc.invoke("set_autostart", { enabled: wanted })
+      .then((actual) => { autostart.checked = actual; })
+      .catch((reason) => {
+        autostart.checked = !wanted;
+        showError(autostartError, `Không đổi được: ${reason}`);
+      })
+      .finally(() => { autostart.disabled = false; });
+  });
+})();
+</script>
+</body>
+</html>

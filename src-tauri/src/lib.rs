@@ -2,12 +2,13 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use tauri::menu::{CheckMenuItem, Menu, MenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
 use tauri::webview::{NewWindowFeatures, NewWindowResponse, PermissionKind, PermissionResponse};
 
 #[cfg(target_os = "macos")]
 mod location;
+mod settings;
 /// Windows / Linux: the webview's own geolocation (see `on_permission_request`); GEO_SCRIPT, the only
 /// caller of these, is injected on macOS only.
 #[cfg(not(target_os = "macos"))]
@@ -25,7 +26,6 @@ use tauri::{
   AppHandle, Manager, Url, UserAttentionType, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent, Wry,
 };
 use tauri_plugin_notification::NotificationExt;
-use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
@@ -66,8 +66,12 @@ pub fn run() {
       set_badge,
       notify,
       location::get_location,
-      location::location_permission
+      location::location_permission,
+      settings::get_settings,
+      settings::set_autostart
     ])
+    .register_uri_scheme_protocol(settings::PROTOCOL, |_ctx, request| settings::serve(&request))
+    .on_menu_event(|app, event| on_menu(app, event.id.as_ref()))
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -79,6 +83,8 @@ pub fn run() {
         spawn_updater(app.handle().clone());
       }
       build_main_window(app.handle())?;
+      #[cfg(target_os = "macos")]
+      setup_app_menu(app.handle())?;
       setup_tray(app.handle())?;
       Ok(())
     })
@@ -472,24 +478,19 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
   let Some(tray) = app.tray_by_id(MAIN) else {
     return Ok(());
   };
-  let autostart = app.autolaunch().is_enabled().unwrap_or(false);
+  // Clicks are handled by the app-wide `on_menu_event` (`on_menu`), which also sees the macOS menu bar.
   let menu = Menu::with_items(
     app,
     &[
       &MenuItem::with_id(app, "open", "Mở AMS", true, None::<&str>)?,
       &MenuItem::with_id(app, "chat", "Mở Chat", true, None::<&str>)?,
-      &CheckMenuItem::with_id(app, "autostart", "Khởi động cùng máy", true, autostart, None::<&str>)?,
+      &PredefinedMenuItem::separator(app)?,
+      &MenuItem::with_id(app, SETTINGS_MENU, "Cài đặt…", true, None::<&str>)?,
+      &PredefinedMenuItem::separator(app)?,
       &MenuItem::with_id(app, "quit", "Thoát", true, None::<&str>)?,
     ],
   )?;
   tray.set_menu(Some(menu))?;
-  tray.on_menu_event(|app, event| match event.id.as_ref() {
-    "open" => show_main(app),
-    "chat" => open_chat(app, None),
-    "autostart" => toggle_autostart(app),
-    "quit" => app.exit(0),
-    _ => {}
-  });
   tray.on_tray_icon_event(|tray, event| {
     if let TrayIconEvent::Click {
       button: MouseButton::Left,
@@ -503,16 +504,30 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
   Ok(())
 }
 
-fn toggle_autostart(app: &AppHandle) {
-  let launcher = app.autolaunch();
-  let result = if launcher.is_enabled().unwrap_or(false) {
-    launcher.disable()
-  } else {
-    launcher.enable()
-  };
-  if let Err(e) = result {
-    log::error!("toggling autostart failed: {e}");
+const SETTINGS_MENU: &str = "settings";
+
+/// Every menu click, tray and macOS menu bar alike.
+fn on_menu(app: &AppHandle, id: &str) {
+  match id {
+    "open" => show_main(app),
+    "chat" => open_chat(app, None),
+    SETTINGS_MENU => settings::open(app),
+    "quit" => app.exit(0),
+    _ => {}
   }
+}
+
+/// macOS: the default menu bar (Edit keeps copy/paste working) plus "Cài đặt…" (Cmd+,) under the
+/// app menu, after About, as Mac apps do. Windows has no menu bar: the tray has "Cài đặt…" instead.
+#[cfg(target_os = "macos")]
+fn setup_app_menu(app: &AppHandle) -> tauri::Result<()> {
+  let menu = Menu::default(app)?;
+  if let Some(app_menu) = menu.items()?.first().and_then(|item| item.as_submenu().cloned()) {
+    let settings = MenuItem::with_id(app, SETTINGS_MENU, "Cài đặt…", true, Some("CmdOrCtrl+,"))?;
+    app_menu.insert_items(&[&settings, &PredefinedMenuItem::separator(app)?], 2)?;
+  }
+  app.set_menu(menu)?;
+  Ok(())
 }
 
 fn spawn_updater(app: AppHandle) {
