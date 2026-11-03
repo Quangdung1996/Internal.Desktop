@@ -6,23 +6,38 @@
 <title>AMS</title>
 <style>
   html, body { height: 100%; margin: 0; }
-  body { display: flex; align-items: center; justify-content: center; background: #f8fafc; color: #1f2937;
+  body { display: flex; align-items: center; justify-content: center; background: #fff; color: #1f2937;
     font: 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-  main { text-align: center; max-width: 380px; padding: 24px; }
-  h1 { margin: 0 0 8px; font-size: 20px; color: #067179; }
-  p { margin: 0 0 20px; line-height: 1.5; color: #4b5563; }
-  button { padding: 10px 20px; border: 0; border-radius: 8px; background: #067179; color: #fff; font: inherit; cursor: pointer; }
+  main { text-align: center; width: 320px; padding: 24px; }
+  img { width: 128px; height: 128px; display: block; margin: 0 auto 16px; }
+  .bar { height: 4px; border-radius: 2px; background: #e2e8f0; overflow: hidden; }
+  .bar::after { content: ""; display: block; width: 40%; height: 100%; border-radius: 2px; background: #067179;
+    animation: slide 1.2s ease-in-out infinite; }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+  #status { margin: 12px 0 0; color: #64748b; font-size: 13px; }
+  #warning { display: none; margin-top: 20px; padding: 10px 12px; border-radius: 8px; background: #fef3c7;
+    color: #92400e; line-height: 1.5; }
+  button { margin-top: 12px; padding: 8px 18px; border: 0; border-radius: 8px; background: #067179; color: #fff;
+    font: inherit; cursor: pointer; }
   button:disabled { opacity: .6; cursor: default; }
+  body.offline .bar::after { animation-duration: 2.4s; background: #94a3b8; }
+  body.offline #warning { display: block; }
+  @media (prefers-reduced-motion: reduce) { .bar::after { animation: none; width: 100%; } }
 </style>
 </head>
 <body>
 <main>
-  <h1>Không kết nối được AMS</h1>
-  <p>Kiểm tra kết nối mạng. AMS tự tải lại khi kết nối được.</p>
-  <button id="retry">Thử lại ngay</button>
+  <img src="/logo.png" alt="AMS">
+  <div class="bar" role="progressbar" aria-label="Đang tải AMS"></div>
+  <p id="status">Đang tải AMS…</p>
+  <div id="warning" role="alert">
+    ⚠ Mất kết nối internet hoặc không kết nối được máy chủ AMS.<br>AMS tự tải lại khi có kết nối.
+    <br><button id="retry">Thử lại ngay</button>
+  </div>
 </main>
 <script>
-  // Shown by lib.rs (watch_load) when a page never loaded. Polls the site and returns to `to` once it answers.
+  // The main window's start page, and what lib.rs (watch_load) shows when a page never loaded.
+  // Goes on to `to` once the site answers; until then warns and polls.
   const to = (() => {
     try {
       const url = new URL(new URLSearchParams(location.search).get("to"));
@@ -32,7 +47,14 @@
     }
   })();
   const retry = document.getElementById("retry");
+  const status = document.getElementById("status");
   let checking = false;
+  function offline() {
+    checking = false;
+    retry.disabled = false;
+    status.textContent = "Đang chờ kết nối…";
+    document.body.classList.add("offline");
+  }
   async function check() {
     if (!to || checking) return;
     checking = true;
@@ -40,15 +62,18 @@
     try {
       // no-cors: any answer, even an opaque one, means the server is reachable; only a network error rejects.
       await fetch(to.origin + "/", { method: "HEAD", mode: "no-cors", cache: "no-store" });
+      status.textContent = "Đang tải AMS…";
       location.replace(to.href);
+      // Still here: the navigation itself failed (macOS keeps this page). Warn and poll again.
+      setTimeout(offline, 20000);
     } catch {
-      checking = false;
-      retry.disabled = false;
+      offline();
     }
   }
   retry.addEventListener("click", check);
   addEventListener("online", check);
   setInterval(check, 5000);
+  check();
 </script>
 </body>
 </html>
