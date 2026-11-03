@@ -275,12 +275,16 @@ fn is_site_page(url: &Url) -> bool {
 }
 
 /// A main or chat page that never loads (offline at launch; on Windows a reload while offline) would
-/// leave a blank or browser error page. Every AMS document pings `page_alive` (DESKTOP_SCRIPT);
-/// building the window or leaving a page (`page_leaving`) starts a wait, and without a ping within
-/// LOAD_TIMEOUT the window shows the bundled offline page, which returns once the site answers.
-/// Detection lives in the page because macOS reports no failed load (wry's Started is on commit).
+/// leave a blank or browser error page. Every document pings `page_alive` with its address
+/// (DESKTOP_SCRIPT); building the window, leaving a page (`page_leaving`) or, on Windows, a load
+/// starting (`with_handlers`) starts a wait. Without a ping from an AMS page within LOAD_TIMEOUT the
+/// window is asked once more (PROBE_GRACE: a ping that raced a late `page_leaving`), then shows the
+/// bundled offline page, which returns once the site answers. Detection lives in the page because
+/// macOS reports no failed load (wry's Started fires on commit).
 /// ponytail: a site slower than LOAD_TIMEOUT to answer lands there too; the page brings it back.
 const LOAD_TIMEOUT: Duration = Duration::from_secs(10);
+const PROBE_GRACE: Duration = Duration::from_secs(2);
+const PROBE_SCRIPT: &str = r#"window.__TAURI_INTERNALS__?.invoke("page_alive", { url: location.href })"#;
 static LOAD_WAITS: Mutex<Vec<(String, u64, Url)>> = Mutex::new(Vec::new());
 static LOAD_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -297,15 +301,22 @@ fn watch_load(app: &AppHandle, label: &str, fallback: Url) {
   let app = app.clone();
   let label = label.to_string();
   std::thread::spawn(move || {
-    std::thread::sleep(LOAD_TIMEOUT);
-    let fallback = {
+    // This wait, if no ping cleared or replaced it; `take` ends it.
+    let still_waiting = |take: bool| {
       let mut waits = LOAD_WAITS.lock().unwrap_or_else(|e| e.into_inner());
-      let Some(at) = waits.iter().position(|(l, s, _)| *l == label && *s == seq) else {
-        return;
-      };
-      waits.remove(at).2
+      let at = waits.iter().position(|(l, s, _)| *l == label && *s == seq)?;
+      Some(if take { waits.remove(at).2 } else { waits[at].2.clone() })
     };
+    std::thread::sleep(LOAD_TIMEOUT);
     let Some(window) = app.get_webview_window(&label) else {
+      return;
+    };
+    if still_waiting(false).is_none() {
+      return;
+    }
+    let _ = window.eval(PROBE_SCRIPT);
+    std::thread::sleep(PROBE_GRACE);
+    let Some(fallback) = still_waiting(true) else {
       return;
     };
     // Windows keeps the failed address as the url; macOS keeps the previous page.
@@ -315,11 +326,16 @@ fn watch_load(app: &AppHandle, label: &str, fallback: Url) {
   });
 }
 
-/// DESKTOP_SCRIPT: a document loaded in this window (`watch_load`). Sync commands run on the main
-/// thread in arrival order, so a ping cannot overtake the `page_leaving` before it.
+/// DESKTOP_SCRIPT / PROBE_SCRIPT: a document is up in this window (`watch_load`). Only an AMS page or
+/// the offline page counts: WebView2's error page and WKWebView's blank page run the script too.
 #[tauri::command]
-fn page_alive(window: WebviewWindow) {
-  LOAD_WAITS.lock().unwrap_or_else(|e| e.into_inner()).retain(|(l, _, _)| l != window.label());
+fn page_alive(window: WebviewWindow, url: String) {
+  let Ok(url) = url.parse::<Url>() else {
+    return;
+  };
+  if is_site_page(&url) || settings::offline_target(&url).is_some() {
+    LOAD_WAITS.lock().unwrap_or_else(|e| e.into_inner()).retain(|(l, _, _)| l != window.label());
+  }
 }
 
 /// DESKTOP_SCRIPT on `pagehide`: this page is being left (`watch_load`). Leaving the offline page
@@ -441,8 +457,8 @@ const DESKTOP_SCRIPT: &str = r#"(() => {
   window.Notification = DesktopNotification;
   // The offline watch (watch_load in lib.rs): this document loaded; leaving it starts a new wait.
   // pageshow too: a page restored from the back/forward cache runs no init script.
-  invoke("page_alive");
-  addEventListener("pageshow", () => invoke("page_alive"));
+  invoke("page_alive", { url: location.href });
+  addEventListener("pageshow", () => invoke("page_alive", { url: location.href }));
   addEventListener("pagehide", () => invoke("page_leaving", { url: location.href }));
 })();"#;
 
@@ -676,6 +692,14 @@ fn with_handlers<'a>(builder: WindowBuilder<'a>, app: &AppHandle) -> WindowBuild
       _ => PermissionResponse::Default,
     })
     .on_new_window(move |url, features| open_new_window(&app, url, features));
+  // Windows: every load (error pages too) starts the offline watch; the `pagehide` ping alone can be
+  // lost at unload. macOS reports only loads that commit, so there the page pings are all it has.
+  #[cfg(windows)]
+  let builder = builder.on_page_load(|window, payload| {
+    if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) && is_site_page(payload.url()) {
+      watch_load(window.app_handle(), window.label(), payload.url().clone());
+    }
+  });
   #[cfg(target_os = "macos")]
   let builder = builder.initialization_script(location::GEO_SCRIPT);
   // WKWebView cancels every download unless a handler exists (wry then saves to ~/Downloads).
