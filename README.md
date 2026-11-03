@@ -15,7 +15,7 @@ to install). Only shell changes (this repo) need a new desktop release, delivere
 - Chat notifications: `tauri-plugin-notification` replaces `window.Notification` in the page (no FE change). Clicking a notification does not open the room.
 - Chat gets one window of its own (like a messenger): the sidebar Chat link, "open in Chat" and the tray all land in it; a room link navigates it, size/position remembered.
 - Other `window.open` / `target="_blank"`: `*.agari.com.vn` and `blob:` open in an app window (session kept); other sites open in the default browser. Without this both engines drop the request.
-- Close = hide to tray (chat keeps running). Tray: Mở AMS / Mở Chat / Khởi động cùng máy / Thoát. macOS: Dock click reopens.
+- Close = hide to tray (chat keeps running). Tray: Mở AMS / Mở Chat / Cài đặt… / Thoát. macOS: Dock click reopens.
 - Single instance, remembered window size/position, Ctrl +/- zoom.
 - macOS: downloads saved to ~/Downloads and revealed in Finder; `window.print` works (Tauri print API); camera, mic, location declared in `Info.plist` + `Entitlements.plist`.
 - Auto update: checks GitHub `releases/latest` at startup and every 6 h, asks before installing.
@@ -30,9 +30,24 @@ One-time repo setup:
 - Settings → General → visibility **Public** (updater downloads `latest.json` anonymously; Actions minutes are free).
 - Settings → Actions → General → Workflow permissions → **Read and write**.
 - Settings → Secrets and variables → Actions → `TAURI_SIGNING_PRIVATE_KEY` = content of the updater private key (generated with `npx tauri signer generate`, no password; public half is `plugins.updater.pubkey`). Losing that key means installed apps can never update again: keep a backup outside this machine.
+- macOS signing + notarization secrets: `APPLE_CERTIFICATE` (base64 of the Developer ID Application .p12),
+  `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (`Developer ID Application: AGARI COMPANY LIMITED (ZGS2BK2B25)`),
+  `APPLE_ID`, `APPLE_PASSWORD` (app-specific password, account.apple.com), `APPLE_TEAM_ID` (`ZGS2BK2B25`).
+  The cert expires (check `certutil -dump` → NotAfter): renew it and replace the first two secrets before then.
 
-Builds are not code-signed: Windows SmartScreen → "More info" → "Run anyway"; macOS (ad-hoc signed) →
-System Settings → Privacy & Security → "Open Anyway".
+macOS builds are Developer ID signed and notarized (open like any app). Windows builds are not code-signed:
+SmartScreen → "More info" → "Run anyway".
+
+## Install on macOS (staff)
+
+1. Download `AMS_<version>_universal.dmg` from https://github.com/Quangdung1996/Internal.Desktop/releases/latest (one file for Apple Silicon and Intel).
+2. Open the .dmg, drag **AMS** into **Applications**, eject the disk. Do not run it from the .dmg: auto update cannot replace a read-only app.
+3. Open AMS from Applications, allow **Notifications** when asked (chat alerts). If missed: System Settings → Notifications → AMS → Allow.
+   Camera / microphone / location are asked the first time a page uses them; change later in Privacy & Security.
+4. Optional: menu bar icon → **Cài đặt…** → **Khởi động cùng máy** to start with macOS.
+
+Closing the window keeps AMS running in the menu bar; quit from the tray → **Thoát** (or ⌘Q).
+Updates: the app asks when a new version is published; accept and it restarts itself.
 
 ## Local development (https://v2.tauri.app/start/prerequisites/)
 
