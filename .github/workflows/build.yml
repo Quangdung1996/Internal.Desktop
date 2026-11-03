@@ -84,14 +84,14 @@ jobs:
           repo: ams-desktop-releases
           releaseCommitish: main
           tagName: app-v__VERSION__
-          releaseName: AMS phiên bản __VERSION__
+          releaseName: AMS __VERSION__
           # Also the `notes` of latest.json. Public: install steps only, never change details.
           releaseBody: |
-            Tải bản cài đặt ở mục **Assets** bên dưới:
-            - **macOS** (chip Apple và Intel): file `.dmg`
-            - **Windows**: file `-setup.exe`
+            Download the installer from **Assets** below:
+            - **macOS** (Apple silicon and Intel): the `.dmg` file
+            - **Windows**: the `-setup.exe` file
 
-            Máy đã cài AMS sẽ tự hỏi cập nhật lên bản này.
+            Installed copies of AMS will offer this update on their own.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
