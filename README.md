@@ -22,7 +22,7 @@ to install). Only shell changes (this repo) need a new desktop release, delivere
 - Start: the main window opens on a bundled page (`src-tauri/offline.html`: logo + loading bar) that goes on to the site once it answers. Offline at launch it stays there with a "Mất kết nối internet" warning and retries every 5 s; a main/chat page that never loads within 10 s also lands there.
 - Offline while in use: the page is kept, dimmed and blurred with a "Mất kết nối internet" warning (clicks held) until the connection is back; nothing navigates.
 - macOS: downloads saved to ~/Downloads and revealed in Finder; `window.print` works (Tauri print API); camera, mic, location declared in `Info.plist` + `Entitlements.plist`.
-- Auto update: checks `releases/latest` of `ams-desktop-releases` (then of this repo, for the move) at startup and every 6 h, asks before installing.
+- Auto update: checks `releases/latest` of `ams-desktop-releases` at startup and every 6 h, asks before installing.
 
 ## Release (no local toolchain needed)
 

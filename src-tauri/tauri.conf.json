@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "AMS",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "identifier": "vn.com.agari.ams",
   "build": {
     "frontendDist": "https://approve.agari.com.vn",
@@ -57,8 +57,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI2NUQ5MkYzQkRBMzVFMjcKUldRblhxTzk4NUpkdHFvb2x3djBJY3pTUS9PWjJWTE1EU01maDZOSmF5N0ZGcmdvVTNQYks2OUYK",
       "endpoints": [
-        "https://github.com/Quangdung1996/ams-desktop-releases/releases/latest/download/latest.json",
-        "https://github.com/Quangdung1996/Internal.Desktop/releases/latest/download/latest.json"
+        "https://github.com/Quangdung1996/ams-desktop-releases/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

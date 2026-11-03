@@ -1,7 +1,7 @@
 # Builds the Windows (NSIS .exe + MSI) and macOS (.dmg, universal) installers on GitHub runners
 # and attaches them to a draft release "app-v<version>" (version from src-tauri/tauri.conf.json)
 # in the PUBLIC repo Quangdung1996/ams-desktop-releases: it holds only a README and the releases, so
-# this repo (the code) can stay private while the updater downloads anonymously. The tag there points
+# this repo (the code) stays private while the updater downloads anonymously. The tag there points
 # at that repo's own README commit (releaseCommitish), never at code from here.
 # Installed apps auto-update only after that draft is published (releases/latest skips drafts),
 # so publishing the draft is the release gate.
