@@ -511,7 +511,9 @@ const DESKTOP_SCRIPT: &str = r#"(() => {
     const clickId = ++nextClickId;
     shown.set(clickId, this);
     if (shown.size > 50) shown.delete(shown.keys().next().value);
-    invoke("notify", { title: this.title, body: this.body, tag: this.tag, clickId });
+    // data.kind "call" (FE desktop-notify): a click brings up the window that rings, see on_notification_click.
+    const kind = o.data && typeof o.data.kind === "string" ? o.data.kind : null;
+    invoke("notify", { title: this.title, body: this.body, tag: this.tag, clickId, kind });
   }
   Object.defineProperty(window, "__amsNotificationClick", {
     value: (clickId) => {
@@ -608,15 +610,35 @@ fn is_duplicate(key: String) -> bool {
 /// Called by the page's `new Notification(..)`: an OS notification with sound, and the app asks
 /// for attention when none of its windows is in front. async: notify-rust blocks on macOS.
 #[tauri::command]
-async fn notify(app: AppHandle, window: WebviewWindow, title: String, body: String, tag: String, click_id: Option<u32>) {
-  let origin = click_id.map(|id| (window.label().to_string(), id));
+async fn notify(
+  app: AppHandle,
+  window: WebviewWindow,
+  title: String,
+  body: String,
+  tag: String,
+  click_id: Option<u32>,
+  kind: Option<String>,
+) {
+  let origin = click_id.map(|id| Origin {
+    label: window.label().to_string(),
+    click_id: id,
+    call: kind.as_deref() == Some("call"),
+  });
   deliver_notification(app, title, body, tag, origin).await;
 }
 
 /// Notification id → where it came from (window label, the page's clickId) and the text it showed
 /// (`text_key`), so a click runs that page's onclick. Bounded: a click on an older one falls back
 /// (`on_notification_click`).
-static NOTIFICATION_ORIGINS: Mutex<Vec<(i32, String, u32, String)>> = Mutex::new(Vec::new());
+static NOTIFICATION_ORIGINS: Mutex<Vec<(i32, Origin, String)>> = Mutex::new(Vec::new());
+
+/// Which page made a notification: its window, its clickId (`__amsNotificationClick`), and whether it
+/// is an incoming call (FE `data: { kind: "call" }`).
+pub(crate) struct Origin {
+  label: String,
+  click_id: u32,
+  call: bool,
+}
 static NOTIFICATION_SEQ: AtomicI32 = AtomicI32::new(1);
 const NOTIFICATION_ORIGINS_KEPT: usize = 100;
 
@@ -634,8 +656,8 @@ pub(crate) fn on_notification_click_by_text(app: &AppHandle, title: &str, body: 
     .unwrap_or_else(|e| e.into_inner())
     .iter()
     .rev()
-    .find(|(_, _, _, k)| *k == key)
-    .map(|(id, _, _, _)| *id);
+    .find(|(_, _, k)| *k == key)
+    .map(|(id, _, _)| *id);
   on_notification_click(app, id);
 }
 
@@ -644,12 +666,25 @@ pub(crate) fn on_notification_click_by_text(app: &AppHandle, title: &str, body: 
 fn on_notification_click(app: &AppHandle, id: Option<i32>) {
   let origin = id.and_then(|id| {
     let mut origins = NOTIFICATION_ORIGINS.lock().unwrap_or_else(|e| e.into_inner());
-    let at = origins.iter().position(|(n, _, _, _)| *n == id)?;
-    let (_, label, click_id, _) = origins.remove(at);
-    Some((label, click_id))
+    let at = origins.iter().position(|(n, _, _)| *n == id)?;
+    Some(origins.remove(at).1)
   });
+  // An incoming call rings in every open AMS window (the call banner with answer/decline). Bring up
+  // the chat window if it is open (where the user chats), else the main one; never open a new chat
+  // window for it: a page loaded after the ring started has no incoming banner (it is set by the
+  // live event only).
+  if origin.as_ref().is_some_and(|o| o.call) {
+    if let Some(chat) = app.get_webview_window(CHAT) {
+      log::info!("notification #{id:?} clicked: a call, showing the chat window");
+      bring_forward(&chat);
+    } else {
+      log::info!("notification #{id:?} clicked: a call, showing the main window");
+      show_main(app);
+    }
+    return;
+  }
   // Settings ▸ "Gửi thông báo thử", or one too old to remember.
-  let Some((label, click_id)) = origin else {
+  let Some(Origin { label, click_id, .. }) = origin else {
     log::info!("notification #{id:?} clicked: no origin kept, showing the main window");
     show_main(app);
     return;
@@ -669,7 +704,7 @@ fn on_notification_click(app: &AppHandle, id: Option<i32>) {
 }
 
 /// `notify`'s work, shared with Settings ▸ "Gửi thông báo thử".
-pub(crate) async fn deliver_notification(app: AppHandle, title: String, body: String, tag: String, origin: Option<(String, u32)>) {
+pub(crate) async fn deliver_notification(app: AppHandle, title: String, body: String, tag: String, origin: Option<Origin>) {
   if is_duplicate(format!("{tag}\u{1f}{title}\u{1f}{body}")) {
     return;
   }
@@ -677,12 +712,12 @@ pub(crate) async fn deliver_notification(app: AppHandle, title: String, body: St
   let prefs = settings::prefs(&app);
   let body = if prefs.notification_preview || body.is_empty() { body } else { "Có tin nhắn mới".to_string() };
   let id = NOTIFICATION_SEQ.fetch_add(1, Ordering::Relaxed);
-  if let Some((label, click_id)) = origin {
+  if let Some(origin) = origin {
     let mut origins = NOTIFICATION_ORIGINS.lock().unwrap_or_else(|e| e.into_inner());
     if origins.len() >= NOTIFICATION_ORIGINS_KEPT {
       origins.remove(0);
     }
-    origins.push((id, label, click_id, text_key(&title, &body)));
+    origins.push((id, origin, text_key(&title, &body)));
   }
   let mut builder = app.notification().builder().id(id).title(&title).body(&body);
   // No sound name = silent on both OSes (Windows marks the toast silent).
