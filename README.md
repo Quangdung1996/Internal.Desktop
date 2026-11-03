@@ -16,6 +16,7 @@ to install). Only shell changes (this repo) need a new desktop release, delivere
 - Chat gets one window of its own (like a messenger): the sidebar Chat link, "open in Chat" and the tray all land in it; a room link navigates it, size/position remembered.
 - Other `window.open` / `target="_blank"`: `*.agari.com.vn` and `blob:` open in an app window (session kept); other sites open in the default browser. Without this both engines drop the request.
 - Close = hide to tray (chat keeps running). Tray: Mở AMS / Mở Chat / Cài đặt… / Thoát. macOS: Dock click reopens.
+- Deep links: `ams://<path>?<query>` opens that page of the site (e.g. `ams://chat/<roomId>` in the chat window, others in the main window); only path/query are used, the origin stays the site's. Registered by the installer; nothing generates these links yet (emails/FE must).
 - Single instance, remembered window size/position, Ctrl +/- zoom.
 - Offline: a main/chat page that does not load within 10 s (offline at launch, reload while offline) is replaced by a bundled "Không kết nối được AMS" page (`src-tauri/offline.html`) that retries every 5 s and returns to the page.
 - macOS: downloads saved to ~/Downloads and revealed in Finder; `window.print` works (Tauri print API); camera, mic, location declared in `Info.plist` + `Entitlements.plist`.

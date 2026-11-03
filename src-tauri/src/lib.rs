@@ -30,6 +30,7 @@ mod location {
 use tauri::{
   AppHandle, Manager, Url, UserAttentionType, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent, Wry,
 };
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_opener::OpenerExt;
@@ -52,7 +53,14 @@ type WindowBuilder<'a> = WebviewWindowBuilder<'a, Wry, AppHandle>;
 pub fn run() {
   tauri::Builder::default()
     // Must be the first plugin: a second launch focuses the running app instead.
-    .plugin(tauri_plugin_single_instance::init(|app, _, _| show_main(app)))
+    .plugin(tauri_plugin_single_instance::init(|app, args, _| {
+      // An ams:// link is opened by the deep-link plugin (open_deep_link), maybe in the chat window.
+      if !args.iter().any(|arg| arg.starts_with(DEEP_LINK_SCHEME_PREFIX)) {
+        show_main(app);
+      }
+    }))
+    // After single-instance (its deep-link feature forwards a second instance's link here).
+    .plugin(tauri_plugin_deep_link::init())
     // Replaces window.Notification in the page, so the web chat popups become OS notifications.
     .plugin(tauri_plugin_notification::init())
     .plugin(tauri_plugin_opener::init())
@@ -118,6 +126,19 @@ pub fn run() {
       // Settings ▸ "Mở ẩn": a login launch stays in the tray (macOS Dock click / tray opens it).
       let hidden = settings::launched_by_autostart() && settings::prefs(app.handle()).start_hidden;
       build_main_window(app.handle(), !hidden)?;
+      // ams:// links: a cold start on Windows carries one in its arguments (get_current); later ones,
+      // and every one on macOS, arrive as events.
+      let handle = app.handle().clone();
+      app.deep_link().on_open_url(move |event| {
+        for link in event.urls() {
+          open_deep_link(&handle, &link);
+        }
+      });
+      if let Ok(Some(links)) = app.deep_link().get_current() {
+        for link in links {
+          open_deep_link(app.handle(), &link);
+        }
+      }
       #[cfg(target_os = "macos")]
       setup_app_menu(app.handle())?;
       setup_tray(app.handle())?;
@@ -218,6 +239,33 @@ fn main_url(app: &AppHandle) -> Option<Url> {
     Some(url.clone())
   } else {
     None
+  }
+}
+
+/// `ams://<path>?<query>` (e.g. ams://chat/<roomId>) opens that page of the site: chat paths in the
+/// chat window, the rest in the main window. Mirrors plugins.deep-link in tauri.conf.json. Nothing
+/// emits these links yet: emails and the FE must generate them (plain https links open the browser).
+const DEEP_LINK_SCHEME_PREFIX: &str = "ams:";
+
+/// Only the path, query and fragment are taken: the origin is always the site's, so a crafted link
+/// (ams:///evil.com/x) cannot load another site into an app window holding the session.
+fn open_deep_link(app: &AppHandle, link: &Url) {
+  if !link.as_str().starts_with(DEEP_LINK_SCHEME_PREFIX) {
+    return;
+  }
+  let Some(mut target) = main_url(app) else {
+    return;
+  };
+  // ams://chat/1 parses "chat" as the host, ams:///chat/1 does not: both mean /chat/1.
+  let path = format!("{}{}", link.host_str().unwrap_or(""), link.path());
+  target.set_path(&format!("/{}", path.trim_start_matches('/')));
+  target.set_query(link.query());
+  target.set_fragment(link.fragment());
+  if is_chat_url(app, &target) {
+    open_chat(app, Some(target));
+  } else if let Some(main) = app.get_webview_window(MAIN) {
+    let _ = main.navigate(target);
+    bring_forward(&main);
   }
 }
 
