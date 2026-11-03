@@ -204,7 +204,7 @@ pub async fn test_notification(app: AppHandle, window: Window) -> Result<(), Str
   // A fresh tag each time: the duplicate guard must not swallow a second test.
   let tag = format!("test-{:?}", std::time::SystemTime::now());
   let body = "Đây là thông báo thử. Bạn thấy nó nghĩa là thông báo đã hoạt động.".to_string();
-  crate::deliver_notification(app, "AMS".to_string(), body, tag).await;
+  crate::deliver_notification(app, "AMS".to_string(), body, tag, None).await;
   Ok(())
 }
 

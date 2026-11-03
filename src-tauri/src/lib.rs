@@ -1,5 +1,5 @@
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -99,6 +99,15 @@ pub fn run() {
       app.manage(settings::load(app.handle()));
       #[cfg(target_os = "macos")]
       mac_notify::present_in_foreground();
+      // A click on a notification does what the page's onclick does (on_notification_click).
+      // ponytail: with a handler the plugin keeps one thread per notification waiting for its click
+      // until it goes away (macOS: until cleared from Notification Center); fine at chat volume.
+      let handle = app.handle().clone();
+      app.notification().on_action(move |performed| {
+        if performed.action_id() == "tap" {
+          on_notification_click(&handle, performed.notification().map(|n| n.id()));
+        }
+      })?;
       if !cfg!(debug_assertions) {
         // Release only: a dev run must not repoint the autostart entry at the dev binary.
         settings::refresh_autostart(app.handle());
@@ -264,6 +273,10 @@ const DESKTOP_SCRIPT: &str = r#"(() => {
   // Replaces the notification plugin's window.Notification (its script runs before this one): the FE's chat popups
   // (`new Notification(title, { body, tag })`) go to `notify`, which adds the sound, the de-duplication across the
   // main and chat windows, and the Dock bounce / taskbar flash. Desktop apps need no permission: always granted.
+  // A click on the OS notification runs the page's own onclick (the FE opens the room): `notify` passes clickId
+  // along, Rust calls __amsNotificationClick(clickId) in this window. The last 50 are kept.
+  const shown = new Map();
+  let nextClickId = 0;
   function DesktopNotification(title, options) {
     const o = options || {};
     this.title = String(title ?? "");
@@ -271,8 +284,20 @@ const DESKTOP_SCRIPT: &str = r#"(() => {
     this.tag = o.tag == null ? "" : String(o.tag);
     this.onclick = null;
     this.onclose = null;
-    invoke("notify", { title: this.title, body: this.body, tag: this.tag });
+    const clickId = ++nextClickId;
+    shown.set(clickId, this);
+    if (shown.size > 50) shown.delete(shown.keys().next().value);
+    invoke("notify", { title: this.title, body: this.body, tag: this.tag, clickId });
   }
+  Object.defineProperty(window, "__amsNotificationClick", {
+    value: (clickId) => {
+      const n = shown.get(clickId);
+      shown.delete(clickId);
+      if (n && typeof n.onclick === "function") n.onclick.call(n, new Event("click"));
+      // The page reloaded since (instance gone): at least open the chat, as the FE's own click would.
+      else if (!n && !location.pathname.startsWith("/chat")) window.open("/chat", "ams-chat");
+    },
+  });
   DesktopNotification.prototype.close = function () {};
   Object.defineProperty(DesktopNotification, "permission", { get: () => "granted" });
   DesktopNotification.requestPermission = (callback) => {
@@ -309,19 +334,60 @@ fn is_duplicate(key: String) -> bool {
 /// Called by the page's `new Notification(..)`: an OS notification with sound, and the app asks
 /// for attention when none of its windows is in front. async: notify-rust blocks on macOS.
 #[tauri::command]
-async fn notify(app: AppHandle, title: String, body: String, tag: String) {
-  deliver_notification(app, title, body, tag).await;
+async fn notify(app: AppHandle, window: WebviewWindow, title: String, body: String, tag: String, click_id: Option<u32>) {
+  let origin = click_id.map(|id| (window.label().to_string(), id));
+  deliver_notification(app, title, body, tag, origin).await;
+}
+
+/// Notification id → where it came from (window label, the page's clickId), so a click runs that
+/// page's onclick. Bounded: a click on an older one falls back (`on_notification_click`).
+static NOTIFICATION_ORIGINS: Mutex<Vec<(i32, String, u32)>> = Mutex::new(Vec::new());
+static NOTIFICATION_SEQ: AtomicI32 = AtomicI32::new(1);
+const NOTIFICATION_ORIGINS_KEPT: usize = 100;
+
+/// A click on a notification (registered in setup through the plugin's `on_action`). Windows reports
+/// it only while the toast is on screen, not from the Action Center.
+fn on_notification_click(app: &AppHandle, id: Option<i32>) {
+  let origin = id.and_then(|id| {
+    let mut origins = NOTIFICATION_ORIGINS.lock().unwrap_or_else(|e| e.into_inner());
+    let at = origins.iter().position(|(n, _, _)| *n == id)?;
+    let (_, label, click_id) = origins.remove(at);
+    Some((label, click_id))
+  });
+  // Settings ▸ "Gửi thông báo thử", or one too old to remember.
+  let Some((label, click_id)) = origin else {
+    show_main(app);
+    return;
+  };
+  let Some(window) = app.get_webview_window(&label) else {
+    open_chat(app, None);
+    return;
+  };
+  // The chat page only switches rooms in place: bring its window up. The main window's onclick opens
+  // the chat window itself (window.open → open_chat), so a hidden main window stays hidden.
+  if label != MAIN {
+    bring_forward(&window);
+  }
+  let _ = window.eval(format!("window.__amsNotificationClick?.({click_id})"));
 }
 
 /// `notify`'s work, shared with Settings ▸ "Gửi thông báo thử".
-pub(crate) async fn deliver_notification(app: AppHandle, title: String, body: String, tag: String) {
+pub(crate) async fn deliver_notification(app: AppHandle, title: String, body: String, tag: String, origin: Option<(String, u32)>) {
   if is_duplicate(format!("{tag}\u{1f}{title}\u{1f}{body}")) {
     return;
   }
   // Settings ▸ Thông báo. The title (who wrote, which room) stays; only the message text is hidden.
   let prefs = settings::prefs(&app);
   let body = if prefs.notification_preview || body.is_empty() { body } else { "Có tin nhắn mới".to_string() };
-  let mut builder = app.notification().builder().title(&title).body(&body);
+  let id = NOTIFICATION_SEQ.fetch_add(1, Ordering::Relaxed);
+  if let Some((label, click_id)) = origin {
+    let mut origins = NOTIFICATION_ORIGINS.lock().unwrap_or_else(|e| e.into_inner());
+    if origins.len() >= NOTIFICATION_ORIGINS_KEPT {
+      origins.remove(0);
+    }
+    origins.push((id, label, click_id));
+  }
+  let mut builder = app.notification().builder().id(id).title(&title).body(&body);
   // No sound name = silent on both OSes (Windows marks the toast silent).
   if prefs.notification_sound
     && let Some(sound) = NOTIFICATION_SOUND

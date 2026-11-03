@@ -12,7 +12,7 @@ to install). Only shell changes (this repo) need a new desktop release, delivere
 
 ## What the shell adds (`src-tauri/src/lib.rs`)
 
-- Chat notifications: `tauri-plugin-notification` replaces `window.Notification` in the page (no FE change). Clicking a notification does not open the room.
+- Chat notifications: `tauri-plugin-notification` replaces `window.Notification` in the page (no FE change). Clicking a notification runs the page's own `onclick` (opens the room in the chat window); on Windows only while the toast is on screen, not from the Action Center.
 - Chat gets one window of its own (like a messenger): the sidebar Chat link, "open in Chat" and the tray all land in it; a room link navigates it, size/position remembered.
 - Other `window.open` / `target="_blank"`: `*.agari.com.vn` and `blob:` open in an app window (session kept); other sites open in the default browser. Without this both engines drop the request.
 - Close = hide to tray (chat keeps running). Tray: Mở AMS / Mở Chat / Cài đặt… / Thoát. macOS: Dock click reopens.
