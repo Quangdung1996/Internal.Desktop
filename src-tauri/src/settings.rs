@@ -26,6 +26,8 @@ pub const PROTOCOL: &str = "amssettings";
 pub const AUTOSTART_ARG: &str = "--autostart";
 
 const PAGE: &str = include_str!("../settings.html");
+/// Served by the same protocol: the "cannot reach AMS" page (lib.rs `watch_load`).
+const OFFLINE_PAGE: &str = include_str!("../offline.html");
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -106,15 +108,33 @@ fn page_url() -> Url {
 }
 
 pub fn serve(request: &tauri::http::Request<Vec<u8>>) -> Response<Vec<u8>> {
-  let path = request.uri().path();
-  if path == "/" || path == "/index.html" {
-    Response::builder()
-      .header(CONTENT_TYPE, "text/html; charset=utf-8")
-      .body(PAGE.as_bytes().to_vec())
-      .unwrap_or_default()
-  } else {
-    Response::builder().status(StatusCode::NOT_FOUND).body(Vec::new()).unwrap_or_default()
+  let page = match request.uri().path() {
+    "/" | "/index.html" => PAGE,
+    "/offline" => OFFLINE_PAGE,
+    _ => return Response::builder().status(StatusCode::NOT_FOUND).body(Vec::new()).unwrap_or_default(),
+  };
+  Response::builder()
+    .header(CONTENT_TYPE, "text/html; charset=utf-8")
+    .body(page.as_bytes().to_vec())
+    .unwrap_or_default()
+}
+
+/// The offline page, returning to `to` once the site answers. Its window is not the settings window,
+/// so the commands below (`from_settings`) stay closed to it.
+pub fn offline_url(to: &Url) -> Url {
+  let mut url = page_url();
+  url.set_path("/offline");
+  url.query_pairs_mut().append_pair("to", to.as_str());
+  url
+}
+
+/// The `to` of an offline page url, if `url` is one.
+pub fn offline_target(url: &Url) -> Option<Url> {
+  let page = page_url();
+  if url.scheme() != page.scheme() || url.host_str() != page.host_str() || url.path() != "/offline" {
+    return None;
   }
+  url.query_pairs().find(|(key, _)| key == "to").and_then(|(_, to)| to.parse().ok())
 }
 
 /// One settings window: a second open brings it forward.

@@ -1,5 +1,5 @@
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -82,7 +82,9 @@ pub fn run() {
       settings::test_notification,
       settings::open_notification_settings,
       settings::open_log_folder,
-      settings::clear_data
+      settings::clear_data,
+      page_alive,
+      page_leaving
     ])
     .register_uri_scheme_protocol(settings::PROTOCOL, |_ctx, request| settings::serve(&request))
     .on_menu_event(|app, event| on_menu(app, event.id.as_ref()))
@@ -185,7 +187,7 @@ fn open_chat(app: &AppHandle, url: Option<Url>) {
   let Some(url) = url.or_else(|| main_url(app)?.join("/chat").ok()) else {
     return;
   };
-  let builder = WebviewWindowBuilder::new(app, CHAT, WebviewUrl::External(url))
+  let builder = WebviewWindowBuilder::new(app, CHAT, WebviewUrl::External(url.clone()))
     .title("AMS Chat")
     .inner_size(1100.0, 760.0)
     .min_inner_size(720.0, 480.0)
@@ -194,14 +196,95 @@ fn open_chat(app: &AppHandle, url: Option<Url>) {
     .zoom_hotkeys_enabled(true);
   match with_handlers(builder, app).build() {
     // Windows: its own taskbar button gets the current count overlay.
-    Ok(_) => apply_badge(app),
+    Ok(_) => {
+      apply_badge(app);
+      watch_load(app, CHAT, url);
+    }
     Err(e) => log::error!("opening the chat window failed: {e}"),
   }
 }
 
-/// Where the main window is: the prod site, or the dev server under `tauri dev`.
+/// Where the main window is: the prod site, or the dev server under `tauri dev`. While it shows the
+/// offline page, the configured site, so chat and reset links keep the site's origin.
 fn main_url(app: &AppHandle) -> Option<Url> {
-  app.get_webview_window(MAIN)?.url().ok()
+  let url = app.get_webview_window(MAIN)?.url().ok()?;
+  if is_site_page(&url) {
+    return Some(url);
+  }
+  let build = &app.config().build;
+  if tauri::is_dev() {
+    build.dev_url.clone()
+  } else if let Some(tauri::utils::config::FrontendDist::Url(url)) = &build.frontend_dist {
+    Some(url.clone())
+  } else {
+    None
+  }
+}
+
+/// A page of the AMS site itself (not blob:, not the bundled pages).
+fn is_site_page(url: &Url) -> bool {
+  matches!(url.scheme(), "http" | "https") && is_app_url(url)
+}
+
+/// A main or chat page that never loads (offline at launch; on Windows a reload while offline) would
+/// leave a blank or browser error page. Every AMS document pings `page_alive` (DESKTOP_SCRIPT);
+/// building the window or leaving a page (`page_leaving`) starts a wait, and without a ping within
+/// LOAD_TIMEOUT the window shows the bundled offline page, which returns once the site answers.
+/// Detection lives in the page because macOS reports no failed load (wry's Started is on commit).
+/// ponytail: a site slower than LOAD_TIMEOUT to answer lands there too; the page brings it back.
+const LOAD_TIMEOUT: Duration = Duration::from_secs(10);
+static LOAD_WAITS: Mutex<Vec<(String, u64, Url)>> = Mutex::new(Vec::new());
+static LOAD_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn watch_load(app: &AppHandle, label: &str, fallback: Url) {
+  if label != MAIN && label != CHAT {
+    return;
+  }
+  let seq = LOAD_SEQ.fetch_add(1, Ordering::Relaxed);
+  {
+    let mut waits = LOAD_WAITS.lock().unwrap_or_else(|e| e.into_inner());
+    waits.retain(|(l, _, _)| l != label);
+    waits.push((label.to_string(), seq, fallback));
+  }
+  let app = app.clone();
+  let label = label.to_string();
+  std::thread::spawn(move || {
+    std::thread::sleep(LOAD_TIMEOUT);
+    let fallback = {
+      let mut waits = LOAD_WAITS.lock().unwrap_or_else(|e| e.into_inner());
+      let Some(at) = waits.iter().position(|(l, s, _)| *l == label && *s == seq) else {
+        return;
+      };
+      waits.remove(at).2
+    };
+    let Some(window) = app.get_webview_window(&label) else {
+      return;
+    };
+    // Windows keeps the failed address as the url; macOS keeps the previous page.
+    let to = window.url().ok().filter(is_site_page).unwrap_or(fallback);
+    log::warn!("{label}: no page within {LOAD_TIMEOUT:?}, showing the offline page");
+    let _ = window.navigate(settings::offline_url(&to));
+  });
+}
+
+/// DESKTOP_SCRIPT: a document loaded in this window (`watch_load`). Sync commands run on the main
+/// thread in arrival order, so a ping cannot overtake the `page_leaving` before it.
+#[tauri::command]
+fn page_alive(window: WebviewWindow) {
+  LOAD_WAITS.lock().unwrap_or_else(|e| e.into_inner()).retain(|(l, _, _)| l != window.label());
+}
+
+/// DESKTOP_SCRIPT on `pagehide`: this page is being left (`watch_load`). Leaving the offline page
+/// means heading back to its `to`.
+#[tauri::command]
+fn page_leaving(app: AppHandle, window: WebviewWindow, url: String) {
+  let Ok(url) = url.parse::<Url>() else {
+    return;
+  };
+  let back_to = if is_site_page(&url) { Some(url) } else { settings::offline_target(&url) };
+  if let Some(url) = back_to.filter(is_site_page) {
+    watch_load(&app, window.label(), url);
+  }
 }
 
 /// A /chat page of the FE itself (not a chat-api file URL that happens to share the path).
@@ -222,6 +305,9 @@ fn build_main_window(app: &AppHandle, visible: bool) -> tauri::Result<()> {
   // Hidden or not, the page loads: chat, notifications and the badge run from it.
   let builder = WebviewWindowBuilder::from_config(app, config)?.visible(visible);
   with_handlers(builder, app).build()?;
+  if let Some(url) = main_url(app) {
+    watch_load(app, MAIN, url);
+  }
   Ok(())
 }
 
@@ -305,6 +391,11 @@ const DESKTOP_SCRIPT: &str = r#"(() => {
     return Promise.resolve("granted");
   };
   window.Notification = DesktopNotification;
+  // The offline watch (watch_load in lib.rs): this document loaded; leaving it starts a new wait.
+  // pageshow too: a page restored from the back/forward cache runs no init script.
+  invoke("page_alive");
+  addEventListener("pageshow", () => invoke("page_alive"));
+  addEventListener("pagehide", () => invoke("page_leaving", { url: location.href }));
 })();"#;
 
 /// One popup per message: the main window (RMS pages) and the chat window both receive it, both
@@ -689,7 +780,9 @@ pub(crate) fn reset_web_data(app: &AppHandle) -> tauri::Result<()> {
     return Ok(());
   };
   main.clear_all_browsing_data()?;
-  let mut home = main.url()?;
+  let Some(mut home) = main_url(app) else {
+    return Ok(());
+  };
   home.set_path("/");
   home.set_query(None);
   home.set_fragment(None);

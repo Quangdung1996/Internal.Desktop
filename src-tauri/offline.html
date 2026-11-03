@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AMS</title>
+<style>
+  html, body { height: 100%; margin: 0; }
+  body { display: flex; align-items: center; justify-content: center; background: #f8fafc; color: #1f2937;
+    font: 15px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { text-align: center; max-width: 380px; padding: 24px; }
+  h1 { margin: 0 0 8px; font-size: 20px; color: #067179; }
+  p { margin: 0 0 20px; line-height: 1.5; color: #4b5563; }
+  button { padding: 10px 20px; border: 0; border-radius: 8px; background: #067179; color: #fff; font: inherit; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: default; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Không kết nối được AMS</h1>
+  <p>Kiểm tra kết nối mạng. AMS tự tải lại khi kết nối được.</p>
+  <button id="retry">Thử lại ngay</button>
+</main>
+<script>
+  // Shown by lib.rs (watch_load) when a page never loaded. Polls the site and returns to `to` once it answers.
+  const to = (() => {
+    try {
+      const url = new URL(new URLSearchParams(location.search).get("to"));
+      return url.protocol === "https:" || url.protocol === "http:" ? url : null;
+    } catch {
+      return null;
+    }
+  })();
+  const retry = document.getElementById("retry");
+  let checking = false;
+  async function check() {
+    if (!to || checking) return;
+    checking = true;
+    retry.disabled = true;
+    try {
+      // no-cors: any answer, even an opaque one, means the server is reachable; only a network error rejects.
+      await fetch(to.origin + "/", { method: "HEAD", mode: "no-cors", cache: "no-store" });
+      location.replace(to.href);
+    } catch {
+      checking = false;
+      retry.disabled = false;
+    }
+  }
+  retry.addEventListener("click", check);
+  addEventListener("online", check);
+  setInterval(check, 5000);
+</script>
+</body>
+</html>
