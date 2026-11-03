@@ -268,9 +268,16 @@ fn open_deep_link(app: &AppHandle, link: &Url) {
   if is_chat_url(app, &target) {
     open_chat(app, Some(target));
   } else if let Some(main) = app.get_webview_window(MAIN) {
-    let _ = main.navigate(target);
+    let _ = navigate_main(&main, target);
     bring_forward(&main);
   }
+}
+
+/// The start page's own check would override a navigation sent while it is up (a deep link on a cold
+/// start): point the start page at `url` instead, it goes there once the site answers.
+fn navigate_main(main: &WebviewWindow, url: Url) -> tauri::Result<()> {
+  let on_start_page = main.url().ok().and_then(|u| settings::offline_target(&u)).is_some();
+  main.navigate(if on_start_page { settings::offline_url(&url) } else { url })
 }
 
 /// A page of the AMS site itself (not blob:, not the bundled pages).
@@ -475,7 +482,8 @@ const DESKTOP_SCRIPT: &str = r#"(() => {
   window.Notification = DesktopNotification;
   // Lost connection on a loaded page: keep the page (like a PWA), dim it with a warning until it is back.
   // `offline` only sees the network going down; a failed fetch also catches "Wi-Fi but no internet",
-  // then the site is probed until it answers. The bundled start/offline page warns on its own.
+  // confirmed by a probe of this site (a CORS error or another server down is a TypeError too).
+  // The bundled start/offline page warns on its own.
   if (/^https?:$/.test(location.protocol) && location.hostname !== "amssettings.localhost") {
     let overlay = null;
     let probe = 0;
@@ -494,10 +502,7 @@ const DESKTOP_SCRIPT: &str = r#"(() => {
           "font:600 14px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.25)";
         overlay.appendChild(note);
         (document.body || document.documentElement).appendChild(overlay);
-        probe = setInterval(() => {
-          if (navigator.onLine) fetchNative(location.origin + "/favicon.ico", { method: "HEAD", cache: "no-store" })
-            .then(() => setOffline(false), () => {});
-        }, 5000);
+        probe = setInterval(() => navigator.onLine && reachable().then((ok) => ok && setOffline(false)), 5000);
       } else {
         overlay.remove();
         overlay = null;
@@ -505,12 +510,14 @@ const DESKTOP_SCRIPT: &str = r#"(() => {
       }
     };
     const fetchNative = window.fetch.bind(window);
+    // no-cors: any answer counts, even an opaque one or a redirect to the login.
+    const reachable = () => fetchNative(location.origin + "/favicon.ico", { method: "HEAD", mode: "no-cors", cache: "no-store" })
+      .then(() => true, () => false);
     window.fetch = (...args) => fetchNative(...args).then(
       (response) => (setOffline(false), response),
       (error) => {
-        // TypeError = network failure; AbortError (cancelled request) says nothing about the network.
-        // Another server being down shows it too, until the probe of this site clears it (5 s).
-        if (error instanceof TypeError) setOffline(true);
+        // TypeError = network failure (or CORS); AbortError (cancelled request) says nothing.
+        if (error instanceof TypeError && !overlay) reachable().then((ok) => ok || setOffline(true));
         throw error;
       },
     );
@@ -931,7 +938,7 @@ pub(crate) fn reset_web_data(app: &AppHandle) -> tauri::Result<()> {
   home.set_path("/");
   home.set_query(None);
   home.set_fragment(None);
-  main.navigate(home)?;
+  navigate_main(&main, home)?;
   set_badge(app.clone(), 0);
   bring_forward(&main);
   Ok(())
