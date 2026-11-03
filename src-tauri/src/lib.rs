@@ -31,6 +31,7 @@ use tauri::{
   AppHandle, Manager, Url, UserAttentionType, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent, Wry,
 };
 use tauri_plugin_deep_link::DeepLinkExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_opener::OpenerExt;
@@ -73,6 +74,16 @@ pub fn run() {
         // No VISIBLE flag: quitting from the tray while hidden must not start the next launch hidden.
         .with_state_flags(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED)
         .with_filter(|label| label == MAIN || label == CHAT)
+        .build(),
+    )
+    // TOGGLE_SHORTCUT (registered in setup): show / hide AMS from any app.
+    .plugin(
+      tauri_plugin_global_shortcut::Builder::new()
+        .with_handler(|app, _, event| {
+          if event.state() == ShortcutState::Pressed {
+            toggle_main(app);
+          }
+        })
         .build(),
     )
     // Brand-teal title bar on every window (title_bar.rs).
@@ -142,6 +153,10 @@ pub fn run() {
       #[cfg(target_os = "macos")]
       setup_app_menu(app.handle())?;
       setup_tray(app.handle())?;
+      // Taken by another app: AMS works without it.
+      if let Err(e) = app.global_shortcut().register(TOGGLE_SHORTCUT) {
+        log::warn!("shortcut {TOGGLE_SHORTCUT} unavailable: {e}");
+      }
       Ok(())
     })
     .on_window_event(|window, event| {
@@ -152,14 +167,7 @@ pub fn run() {
       {
         if settings::prefs(window.app_handle()).close_to_tray {
           api.prevent_close();
-          // macOS: hiding a fullscreen window leaves its Space open and black. Hide the app instead
-          // (⌘H): macOS then leaves the Space as for any app; bring_forward unhides it.
-          #[cfg(target_os = "macos")]
-          if window.is_fullscreen().unwrap_or(false) {
-            let _ = window.app_handle().hide();
-            return;
-          }
-          let _ = window.hide();
+          hide_to_tray(window.app_handle());
         } else {
           window.app_handle().exit(0);
         }
@@ -176,6 +184,36 @@ pub fn run() {
         }
       }
     });
+}
+
+/// ⌥⌘A (macOS) / Ctrl+Alt+A (Windows).
+const TOGGLE_SHORTCUT: &str = "CommandOrControl+Alt+A";
+
+/// The shortcut: AMS in front goes to the tray, otherwise it comes forward.
+fn toggle_main(app: &AppHandle) {
+  let Some(window) = app.get_webview_window(MAIN) else {
+    return;
+  };
+  if window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false) {
+    hide_to_tray(app);
+  } else {
+    bring_forward(&window);
+  }
+}
+
+/// The main window to the tray (close with "close to tray" on, or the shortcut).
+fn hide_to_tray(app: &AppHandle) {
+  let Some(window) = app.get_webview_window(MAIN) else {
+    return;
+  };
+  // macOS: hiding a fullscreen window leaves its Space open and black. Hide the app instead
+  // (⌘H): macOS then leaves the Space as for any app; bring_forward unhides it.
+  #[cfg(target_os = "macos")]
+  if window.is_fullscreen().unwrap_or(false) {
+    let _ = window.app_handle().hide();
+    return;
+  }
+  let _ = window.hide();
 }
 
 fn show_main(app: &AppHandle) {
