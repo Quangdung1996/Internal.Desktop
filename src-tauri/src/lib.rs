@@ -76,7 +76,7 @@ pub fn run() {
         .build(),
     )
     // Brand-teal title bar on every window (title_bar.rs).
-    .plugin(tauri::plugin::Builder::new("title-bar").on_window_ready(title_bar::paint).build())
+    .plugin(tauri::plugin::Builder::<Wry, ()>::new("title-bar").on_window_ready(title_bar::paint).build())
     .invoke_handler(tauri::generate_handler![
       open_link,
       set_badge,
