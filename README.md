@@ -18,7 +18,8 @@ to install). Only shell changes (this repo) need a new desktop release, delivere
 - Close = hide to tray (chat keeps running). Tray: Mở AMS / Mở Chat / Cài đặt… / Thoát. macOS: Dock click reopens.
 - Deep links: `ams://<path>?<query>` opens that page of the site (e.g. `ams://chat/<roomId>` in the chat window, others in the main window); only path/query are used, the origin stays the site's. Registered by the installer; nothing generates these links yet (emails/FE must).
 - Single instance, remembered window size/position, Ctrl +/- zoom.
-- Offline: a main/chat page that does not load within 10 s (offline at launch, reload while offline) is replaced by a bundled "Không kết nối được AMS" page (`src-tauri/offline.html`) that retries every 5 s and returns to the page.
+- Start: the main window opens on a bundled page (`src-tauri/offline.html`: logo + loading bar) that goes on to the site once it answers. Offline at launch it stays there with a "Mất kết nối internet" warning and retries every 5 s; a main/chat page that never loads within 10 s also lands there.
+- Offline while in use: the page is kept, dimmed and blurred with a "Mất kết nối internet" warning (clicks held) until the connection is back; nothing navigates.
 - macOS: downloads saved to ~/Downloads and revealed in Finder; `window.print` works (Tauri print API); camera, mic, location declared in `Info.plist` + `Entitlements.plist`.
 - Auto update: checks GitHub `releases/latest` at startup and every 6 h, asks before installing.
 

@@ -226,12 +226,16 @@ fn open_chat(app: &AppHandle, url: Option<Url>) {
 }
 
 /// Where the main window is: the prod site, or the dev server under `tauri dev`. While it shows the
-/// offline page, the configured site, so chat and reset links keep the site's origin.
+/// start/offline page (or before it exists), the configured site, so chat and reset links keep the
+/// site's origin. macOS: `url()` panics in wry on a window that never loaded a page; the main window
+/// always starts on the bundled start page, so it has one.
 fn main_url(app: &AppHandle) -> Option<Url> {
-  let url = app.get_webview_window(MAIN)?.url().ok()?;
-  if is_site_page(&url) {
-    return Some(url);
-  }
+  let url = app.get_webview_window(MAIN).and_then(|w| w.url().ok());
+  url.filter(is_site_page).or_else(|| site_url(app))
+}
+
+/// The configured site: frontendDist, or devUrl under `tauri dev`.
+fn site_url(app: &AppHandle) -> Option<Url> {
   let build = &app.config().build;
   if tauri::is_dev() {
     build.dev_url.clone()
@@ -319,8 +323,12 @@ fn watch_load(app: &AppHandle, label: &str, fallback: Url) {
     let Some(fallback) = still_waiting(true) else {
       return;
     };
-    // Windows keeps the failed address as the url; macOS keeps the previous page.
+    // Windows keeps the failed address as the url. macOS keeps the previous page (no better than
+    // `fallback`), and `url()` panics in wry when no page ever loaded (chat window opened offline).
+    #[cfg(windows)]
     let to = window.url().ok().filter(is_site_page).unwrap_or(fallback);
+    #[cfg(not(windows))]
+    let to = fallback;
     log::warn!("{label}: no page within {LOAD_TIMEOUT:?}, showing the offline page");
     let _ = window.navigate(settings::offline_url(&to));
   });
@@ -366,12 +374,22 @@ fn build_main_window(app: &AppHandle, visible: bool) -> tauri::Result<()> {
     .iter()
     .find(|w| w.label == MAIN)
     .expect("main window declared in tauri.conf.json");
+  let Some(site) = site_url(app) else {
+    return Ok(());
+  };
+  // Opens on the bundled start page (logo + loading bar, instant), which goes on to the site once it
+  // answers and warns while offline. It stays painted until the site's first page commits.
+  let start = settings::offline_url(&site);
+  let mut config = config.clone();
+  config.url = if matches!(start.scheme(), "http" | "https") {
+    WebviewUrl::External(start)
+  } else {
+    WebviewUrl::CustomProtocol(start)
+  };
   // Hidden or not, the page loads: chat, notifications and the badge run from it.
-  let builder = WebviewWindowBuilder::from_config(app, config)?.visible(visible);
+  let builder = WebviewWindowBuilder::from_config(app, &config)?.visible(visible);
   with_handlers(builder, app).build()?;
-  if let Some(url) = main_url(app) {
-    watch_load(app, MAIN, url);
-  }
+  watch_load(app, MAIN, site);
   Ok(())
 }
 
@@ -455,6 +473,51 @@ const DESKTOP_SCRIPT: &str = r#"(() => {
     return Promise.resolve("granted");
   };
   window.Notification = DesktopNotification;
+  // Lost connection on a loaded page: keep the page (like a PWA), dim it with a warning until it is back.
+  // `offline` only sees the network going down; a failed fetch also catches "Wi-Fi but no internet",
+  // then the site is probed until it answers. The bundled start/offline page warns on its own.
+  if (/^https?:$/.test(location.protocol) && location.hostname !== "amssettings.localhost") {
+    let overlay = null;
+    let probe = 0;
+    const setOffline = (down) => {
+      if (down === !!overlay) return;
+      if (down) {
+        // Dims and blurs the page (kept as is, nothing navigates) and holds clicks until it is back.
+        overlay = document.createElement("div");
+        overlay.setAttribute("role", "alert");
+        overlay.style.cssText = "position:fixed;inset:0;z-index:2147483647;display:flex;justify-content:center;" +
+          "align-items:flex-start;padding-top:24px;background:rgba(255,255,255,.45);" +
+          "backdrop-filter:blur(3px) grayscale(.6);-webkit-backdrop-filter:blur(3px) grayscale(.6)";
+        const note = document.createElement("div");
+        note.textContent = "⚠ Mất kết nối internet. AMS tự kết nối lại khi có mạng.";
+        note.style.cssText = "padding:10px 16px;border-radius:8px;background:#b45309;color:#fff;" +
+          "font:600 14px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.25)";
+        overlay.appendChild(note);
+        (document.body || document.documentElement).appendChild(overlay);
+        probe = setInterval(() => {
+          if (navigator.onLine) fetchNative(location.origin + "/favicon.ico", { method: "HEAD", cache: "no-store" })
+            .then(() => setOffline(false), () => {});
+        }, 5000);
+      } else {
+        overlay.remove();
+        overlay = null;
+        clearInterval(probe);
+      }
+    };
+    const fetchNative = window.fetch.bind(window);
+    window.fetch = (...args) => fetchNative(...args).then(
+      (response) => (setOffline(false), response),
+      (error) => {
+        // TypeError = network failure; AbortError (cancelled request) says nothing about the network.
+        // Another server being down shows it too, until the probe of this site clears it (5 s).
+        if (error instanceof TypeError) setOffline(true);
+        throw error;
+      },
+    );
+    addEventListener("offline", () => setOffline(true));
+    addEventListener("online", () => setOffline(false));
+    addEventListener("DOMContentLoaded", () => setOffline(!navigator.onLine));
+  }
   // The offline watch (watch_load in lib.rs): this document loaded; leaving it starts a new wait.
   // pageshow too: a page restored from the back/forward cache runs no init script.
   invoke("page_alive", { url: location.href });
@@ -786,6 +849,9 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 const SETTINGS_MENU: &str = "settings";
+const CONTACT_MENU: &str = "contact";
+/// Help ▸ contact (macOS) and the Settings footer (every OS) for bug reports.
+const SUPPORT_EMAIL: &str = "dung.bui@agari.com.vn";
 
 /// Every menu click, tray and macOS menu bar alike.
 fn on_menu(app: &AppHandle, id: &str) {
@@ -793,6 +859,11 @@ fn on_menu(app: &AppHandle, id: &str) {
     "open" => show_main(app),
     "chat" => open_chat(app, None),
     SETTINGS_MENU => settings::open(app),
+    CONTACT_MENU => {
+      if let Err(e) = app.opener().open_url(format!("mailto:{SUPPORT_EMAIL}"), None::<&str>) {
+        log::error!("opening the mail app failed: {e}");
+      }
+    }
     "quit" => app.exit(0),
     _ => {}
   }
@@ -807,13 +878,15 @@ fn setup_app_menu(app: &AppHandle) -> tauri::Result<()> {
     let settings = MenuItem::with_id(app, SETTINGS_MENU, "Cài đặt…", true, Some("CmdOrCtrl+,"))?;
     app_menu.insert_items(&[&settings, &PredefinedMenuItem::separator(app)?], 2)?;
   }
-  // Help (empty in the default menu): the version at a glance + the standard About panel.
+  // Help (empty in the default menu): the version at a glance, who to contact, the standard About panel.
   if let Some(help) = menu.get(HELP_SUBMENU_ID).and_then(|item| item.as_submenu().cloned()) {
     let info = app.package_info();
     let version = info.version.to_string();
     let about = AboutMetadata { name: Some(info.name.clone()), version: Some(version.clone()), ..Default::default() };
     help.append_items(&[
       &MenuItem::new(app, format!("Phiên bản {version}"), false, None::<&str>)?,
+      &PredefinedMenuItem::separator(app)?,
+      &MenuItem::with_id(app, CONTACT_MENU, format!("Gặp lỗi? Liên hệ: {SUPPORT_EMAIL}"), true, None::<&str>)?,
       &PredefinedMenuItem::separator(app)?,
       &PredefinedMenuItem::about(app, Some("Giới thiệu AMS"), Some(about))?,
     ])?;

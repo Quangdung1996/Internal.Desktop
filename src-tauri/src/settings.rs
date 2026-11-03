@@ -26,8 +26,10 @@ pub const PROTOCOL: &str = "amssettings";
 pub const AUTOSTART_ARG: &str = "--autostart";
 
 const PAGE: &str = include_str!("../settings.html");
-/// Served by the same protocol: the "cannot reach AMS" page (lib.rs `watch_load`).
+/// Served by the same protocol: the start page (logo + loading bar) the main window opens on, also
+/// shown when a page never loads (lib.rs `watch_load`); it warns when offline and goes on to the site.
 const OFFLINE_PAGE: &str = include_str!("../offline.html");
+const LOGO: &[u8] = include_bytes!("../icons/128x128@2x.png");
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -108,15 +110,14 @@ fn page_url() -> Url {
 }
 
 pub fn serve(request: &tauri::http::Request<Vec<u8>>) -> Response<Vec<u8>> {
-  let page = match request.uri().path() {
-    "/" | "/index.html" => PAGE,
-    "/offline" => OFFLINE_PAGE,
+  const HTML: &str = "text/html; charset=utf-8";
+  let (body, kind) = match request.uri().path() {
+    "/" | "/index.html" => (PAGE.as_bytes(), HTML),
+    "/offline" => (OFFLINE_PAGE.as_bytes(), HTML),
+    "/logo.png" => (LOGO, "image/png"),
     _ => return Response::builder().status(StatusCode::NOT_FOUND).body(Vec::new()).unwrap_or_default(),
   };
-  Response::builder()
-    .header(CONTENT_TYPE, "text/html; charset=utf-8")
-    .body(page.as_bytes().to_vec())
-    .unwrap_or_default()
+  Response::builder().header(CONTENT_TYPE, kind).body(body.to_vec()).unwrap_or_default()
 }
 
 /// The offline page, returning to `to` once the site answers. Its window is not the settings window,
