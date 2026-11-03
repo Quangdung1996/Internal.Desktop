@@ -20,7 +20,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-latest
+          # Intel runner: the arm64 pool (macos-latest) ran out of capacity (Nov 2026, jobs never
+          # started). It still builds the universal app (Apple silicon + Intel); back to
+          # macos-latest when arm64 queues are normal.
+          - platform: macos-15-intel
             args: --target universal-apple-darwin
           - platform: windows-latest
             # .exe (NSIS, per-user, no admin) for staff; .msi (WiX, per-machine) for IT deployment.
@@ -37,7 +40,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - uses: swatinem/rust-cache@v2
         with:
