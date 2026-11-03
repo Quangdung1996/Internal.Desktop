@@ -8,6 +8,8 @@ use tauri::webview::{NewWindowFeatures, NewWindowResponse, PermissionKind, Permi
 
 #[cfg(target_os = "macos")]
 mod location;
+#[cfg(target_os = "macos")]
+mod mac_notify;
 mod settings;
 /// Windows / Linux: the webview's own geolocation (see `on_permission_request`); GEO_SCRIPT, the only
 /// caller of these, is injected on macOS only.
@@ -71,19 +73,27 @@ pub fn run() {
       settings::get_settings,
       settings::set_autostart,
       settings::set_setting,
-      settings::check_update
+      settings::check_update,
+      settings::test_notification,
+      settings::open_notification_settings,
+      settings::open_log_folder,
+      settings::clear_data
     ])
     .register_uri_scheme_protocol(settings::PROTOCOL, |_ctx, request| settings::serve(&request))
     .on_menu_event(|app, event| on_menu(app, event.id.as_ref()))
     .setup(|app| {
-      if cfg!(debug_assertions) {
-        app.handle().plugin(
-          tauri_plugin_log::Builder::default()
-            .level(log::LevelFilter::Info)
-            .build(),
-        )?;
-      }
+      // Every build: the log file is what IT asks for (Settings ▸ Nâng cao ▸ Mở thư mục log).
+      // macOS ~/Library/Logs/vn.com.agari.ams, Windows %LOCALAPPDATA%\vn.com.agari.ams\logs.
+      app.handle().plugin(
+        tauri_plugin_log::Builder::default()
+          .level(log::LevelFilter::Info)
+          .max_file_size(2_000_000)
+          .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
+          .build(),
+      )?;
       app.manage(settings::load(app.handle()));
+      #[cfg(target_os = "macos")]
+      mac_notify::present_in_foreground();
       if !cfg!(debug_assertions) {
         // Release only: a dev run must not repoint the autostart entry at the dev binary.
         settings::refresh_autostart(app.handle());
@@ -98,12 +108,17 @@ pub fn run() {
       Ok(())
     })
     .on_window_event(|window, event| {
-      // Closing the main window hides it to the tray so chat notifications keep arriving.
+      // Closing the main window hides it to the tray so chat notifications keep arriving, unless
+      // Settings ▸ Chung turned that off: then closing it quits, as people who expect X to quit want.
       if let WindowEvent::CloseRequested { api, .. } = event
         && window.label() == MAIN
       {
-        api.prevent_close();
-        let _ = window.hide();
+        if settings::prefs(window.app_handle()).close_to_tray {
+          api.prevent_close();
+          let _ = window.hide();
+        } else {
+          window.app_handle().exit(0);
+        }
       }
     })
     .build(tauri::generate_context!())
@@ -280,6 +295,11 @@ fn is_duplicate(key: String) -> bool {
 /// for attention when none of its windows is in front. async: notify-rust blocks on macOS.
 #[tauri::command]
 async fn notify(app: AppHandle, title: String, body: String, tag: String) {
+  deliver_notification(app, title, body, tag).await;
+}
+
+/// `notify`'s work, shared with Settings ▸ "Gửi thông báo thử".
+pub(crate) async fn deliver_notification(app: AppHandle, title: String, body: String, tag: String) {
   if is_duplicate(format!("{tag}\u{1f}{title}\u{1f}{body}")) {
     return;
   }
@@ -562,6 +582,29 @@ fn spawn_updater(app: AppHandle) {
       std::thread::sleep(UPDATE_EVERY);
     }
   });
+}
+
+/// Settings ▸ "Xoá dữ liệu và đăng nhập lại": the chat window and popups close, the shared web data
+/// (cookies, cache, storage: one store for all windows on both OSes) is cleared, and the main
+/// window reloads the site's home, which sends a signed-out user to the login.
+pub(crate) fn reset_web_data(app: &AppHandle) -> tauri::Result<()> {
+  for (label, window) in app.webview_windows() {
+    if label == CHAT || label.starts_with(POPUP_PREFIX) {
+      let _ = window.destroy();
+    }
+  }
+  let Some(main) = app.get_webview_window(MAIN) else {
+    return Ok(());
+  };
+  main.clear_all_browsing_data()?;
+  let mut home = main.url()?;
+  home.set_path("/");
+  home.set_query(None);
+  home.set_fragment(None);
+  main.navigate(home)?;
+  set_badge(app.clone(), 0);
+  bring_forward(&main);
+  Ok(())
 }
 
 /// A newer published release, if any (also "Kiểm tra ngay" in Settings).

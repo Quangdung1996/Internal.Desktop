@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use tauri::http::{header::CONTENT_TYPE, Response, StatusCode};
 use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder, Window};
 use tauri_plugin_autostart::ManagerExt as _;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+use tauri_plugin_opener::OpenerExt;
 
 pub const LABEL: &str = "settings";
 /// Registered in lib.rs. A page served by an app-registered protocol counts as local, so it can
@@ -36,11 +38,19 @@ pub struct Prefs {
   pub start_hidden: bool,
   /// Check GitHub releases at startup and every 6 h.
   pub auto_update: bool,
+  /// Closing the main window keeps AMS in the tray (notifications keep arriving); off: it quits.
+  pub close_to_tray: bool,
 }
 
 impl Default for Prefs {
   fn default() -> Self {
-    Self { notification_sound: true, notification_preview: true, start_hidden: false, auto_update: true }
+    Self {
+      notification_sound: true,
+      notification_preview: true,
+      start_hidden: false,
+      auto_update: true,
+      close_to_tray: true,
+    }
   }
 }
 
@@ -117,7 +127,7 @@ pub fn open(app: &AppHandle) {
   }
   let built = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::CustomProtocol(page_url()))
     .title("Cài đặt")
-    .inner_size(580.0, 380.0)
+    .inner_size(600.0, 440.0)
     .resizable(false)
     .maximizable(false)
     .minimizable(false)
@@ -178,11 +188,71 @@ pub fn set_setting(app: AppHandle, window: Window, key: String, value: bool) -> 
     "notificationPreview" => next.notification_preview = value,
     "startHidden" => next.start_hidden = value,
     "autoUpdate" => next.auto_update = value,
+    "closeToTray" => next.close_to_tray = value,
     _ => return Err(format!("unknown setting {key}")),
   }
   save(&app, &next)?;
   *prefs = next;
   Ok(())
+}
+
+/// "Gửi thông báo thử": the same path as a chat popup (sound and preview settings included), so
+/// "nothing showed" means the OS blocks AMS, which `open_notification_settings` then fixes.
+#[tauri::command]
+pub async fn test_notification(app: AppHandle, window: Window) -> Result<(), String> {
+  from_settings(&window)?;
+  // A fresh tag each time: the duplicate guard must not swallow a second test.
+  let tag = format!("test-{:?}", std::time::SystemTime::now());
+  let body = "Đây là thông báo thử. Bạn thấy nó nghĩa là thông báo đã hoạt động.".to_string();
+  crate::deliver_notification(app, "AMS".to_string(), body, tag).await;
+  Ok(())
+}
+
+/// The OS page where AMS's notifications are allowed (or not).
+#[tauri::command]
+pub fn open_notification_settings(app: AppHandle, window: Window) -> Result<(), String> {
+  from_settings(&window)?;
+  #[cfg(target_os = "macos")]
+  let url = "x-apple.systempreferences:com.apple.Notifications-Settings.extension";
+  #[cfg(windows)]
+  let url = "ms-settings:notifications";
+  #[cfg(not(any(target_os = "macos", windows)))]
+  return Err("unsupported".into());
+  #[cfg(any(target_os = "macos", windows))]
+  app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// The log files (lib.rs: log plugin, every build) for the user to send to IT.
+#[tauri::command]
+pub fn open_log_folder(app: AppHandle, window: Window) -> Result<(), String> {
+  from_settings(&window)?;
+  let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+  std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+  app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+}
+
+/// "Xoá dữ liệu và đăng nhập lại", after a confirmation: cookies, cache and storage of the AMS
+/// pages, then the main window starts over at the login. Returns whether it ran.
+#[tauri::command]
+pub async fn clear_data(app: AppHandle, window: Window) -> Result<bool, String> {
+  from_settings(&window)?;
+  let ask = app.clone();
+  let confirmed = tauri::async_runtime::spawn_blocking(move || {
+    ask
+      .dialog()
+      .message("AMS sẽ xoá cookie, bộ nhớ đệm và dữ liệu đã lưu của trang, rồi tải lại. Bạn sẽ phải đăng nhập lại.")
+      .title("Xoá dữ liệu và đăng nhập lại")
+      .kind(MessageDialogKind::Warning)
+      .buttons(MessageDialogButtons::OkCancelCustom("Xoá và đăng nhập lại".into(), "Huỷ".into()))
+      .blocking_show()
+  })
+  .await
+  .map_err(|e| e.to_string())?;
+  if !confirmed {
+    return Ok(false);
+  }
+  crate::reset_web_data(&app).map_err(|e| e.to_string())?;
+  Ok(true)
 }
 
 /// What the user reads; the updater's own (English) error goes to the log for IT.

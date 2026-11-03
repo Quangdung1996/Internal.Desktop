@@ -102,6 +102,10 @@
     font: inherit;
   }
   .button:disabled { opacity: 0.6; }
+  .button.danger { color: var(--danger); }
+  .buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+  .buttons .button { margin-top: 0; }
+  .row .button + .hint.flush, .buttons + .hint.flush { margin-top: 6px; }
   footer {
     padding: 10px 16px 14px;
     text-align: center;
@@ -133,6 +137,12 @@
       </svg>
       Cập nhật
     </button>
+    <button type="button" role="tab" id="tab-advanced" aria-selected="false" aria-controls="panel-advanced" tabindex="-1">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76Z"/>
+      </svg>
+      Nâng cao
+    </button>
   </nav>
 
   <main>
@@ -150,6 +160,16 @@
             Mở ẩn dưới khay hệ thống
           </label>
           <p class="hint">Khi tự mở cùng máy, AMS chạy ngầm và vẫn nhận thông báo, không bật cửa sổ lên.</p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="label">Khi đóng cửa sổ:</span>
+        <div>
+          <label class="check">
+            <input type="checkbox" data-setting="closeToTray" disabled>
+            Vẫn chạy dưới khay hệ thống
+          </label>
+          <p class="hint">Bật: AMS vẫn nhận tin nhắn và thông báo sau khi đóng cửa sổ. Tắt: đóng cửa sổ là thoát hẳn AMS.</p>
         </div>
       </div>
     </section>
@@ -170,6 +190,17 @@
           <p class="hint">Tắt để thông báo chỉ ghi người gửi và "Có tin nhắn mới", tránh lộ nội dung khi chia sẻ màn hình.</p>
         </div>
       </div>
+      <div class="row">
+        <span class="label">Kiểm tra:</span>
+        <div>
+          <div class="buttons">
+            <button type="button" class="button" id="test-notification">Gửi thông báo thử</button>
+            <button type="button" class="button" id="notification-settings">Mở cài đặt thông báo của máy</button>
+          </div>
+          <p class="hint flush">Không thấy thông báo thử? Hãy cho phép AMS gửi thông báo trong cài đặt của máy.</p>
+          <p class="status" id="notification-status" role="status" aria-live="polite"></p>
+        </div>
+      </div>
     </section>
 
     <section role="tabpanel" id="panel-updates" aria-labelledby="tab-updates" hidden>
@@ -185,6 +216,24 @@
           <p class="status" id="update-status" role="status" aria-live="polite"></p>
         </div>
       </div>
+    </section>
+
+    <section role="tabpanel" id="panel-advanced" aria-labelledby="tab-advanced" hidden>
+      <div class="row">
+        <span class="label">Nhật ký lỗi:</span>
+        <div>
+          <button type="button" class="button" id="open-logs">Mở thư mục log</button>
+          <p class="hint flush">Gửi các file trong thư mục này cho IT khi AMS gặp lỗi.</p>
+        </div>
+      </div>
+      <div class="row">
+        <span class="label">Dữ liệu:</span>
+        <div>
+          <button type="button" class="button danger" id="clear-data">Xoá dữ liệu và đăng nhập lại</button>
+          <p class="hint flush">Dùng khi AMS bị kẹt đăng nhập hoặc hiển thị sai. AMS hỏi lại trước khi xoá.</p>
+        </div>
+      </div>
+      <p class="status" id="advanced-status" role="status" aria-live="polite"></p>
     </section>
 
     <p class="error" id="load-error" role="alert" hidden></p>
@@ -265,6 +314,34 @@
         });
     });
   }
+
+  // A button that calls one command and reports in a status line.
+  const action = (buttonId, statusId, command, done) => {
+    const button = $(buttonId);
+    const status = $(statusId);
+    button.addEventListener("click", () => {
+      button.disabled = true;
+      status.className = "status";
+      status.textContent = "";
+      ipc.invoke(command)
+        .then((result) => {
+          const message = done(result);
+          if (message) {
+            status.className = "status ok";
+            status.textContent = message;
+          }
+        })
+        .catch((reason) => {
+          status.className = "status error";
+          status.textContent = `Không thực hiện được: ${reason}`;
+        })
+        .finally(() => { button.disabled = false; });
+    });
+  };
+  action("test-notification", "notification-status", "test_notification", () => "Đã gửi thông báo thử.");
+  action("notification-settings", "notification-status", "open_notification_settings", () => "");
+  action("open-logs", "advanced-status", "open_log_folder", () => "");
+  action("clear-data", "advanced-status", "clear_data", (ran) => (ran ? "Đã xoá dữ liệu. Hãy đăng nhập lại ở cửa sổ AMS." : ""));
 
   const checkButton = $("check-update");
   const updateStatus = $("update-status");
