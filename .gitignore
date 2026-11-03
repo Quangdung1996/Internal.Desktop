@@ -1,2 +1,5 @@
 node_modules
 .claude/settings.local.json
+# Build output of scripts/build-*.sh (installers to hand out, never committed).
+/dist
+.DS_Store

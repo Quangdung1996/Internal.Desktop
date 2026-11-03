@@ -42,10 +42,35 @@ System Settings → Privacy & Security → "Open Anyway".
 
 ```sh
 npm install
-npm run tauri dev   # loads devUrl http://localhost:3000; start Internal.Frontend (`npm run dev`) first
+npm run dev          # the app against the live site (https://approve.agari.com.vn)
 ```
 
-A local `tauri build` needs `TAURI_SIGNING_PRIVATE_KEY` set (updater artifacts are signed).
+Under `dev` macOS attributes notifications to Terminal and shows no location prompt (no .app
+bundle): test notifications, GPS and Settings with `npm run build:mac:debug` instead.
+
+### Building installers (output in `dist/`)
+
+| Command | Result |
+|---|---|
+| `npm run build:mac` | `AMS_<v>_universal.dmg` (Apple silicon + Intel). Add `-- --native` for this Mac's chip only |
+| `npm run build:mac:debug` | `AMS-debug.app`, quick, for testing on this Mac |
+| `npm run build:win` | From a Mac: `AMS_<v>_x64-setup.exe` if `makensis` is installed, else `AMS_<v>_x64-portable.exe` |
+
+Hand out the `.dmg` and the `-setup.exe`; the `.sig` / `.app.tar.gz` files are for the updater.
+`.msi` only builds on Windows (GitHub Actions). Run a script with `--help` for details.
+
+Signing and notarizing (`build:mac`) and updater files (both) come from the environment, never from
+the repo (it is public):
+
+| Variable | Used for |
+|---|---|
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: AGARI COMPANY LIMITED (ZGS2BK2B25)`; found in the keychain if unset |
+| `APPLE_ID`, `APPLE_PASSWORD` (app-specific), `APPLE_TEAM_ID` | notarization; or a `xcrun notarytool store-credentials AMS_NOTARY` keychain profile |
+| `TAURI_SIGNING_PRIVATE_KEY` | updater `.sig` files; without it a build skips them (fine for testing, not for a release) |
+
+Prerequisites for `build:win` on a Mac: `brew install llvm`, and `brew install makensis` for the
+installer (needs current Xcode Command Line Tools). cargo-xwin and the Windows Rust target install
+themselves on first run.
 
 Icons: the "AMS" wordmark cropped from `Internal.Frontend/public/logo AMS.svg` on a white rounded
 square, rendered with `npx tauri icon <square svg>`.
