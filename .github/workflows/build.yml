@@ -45,6 +45,20 @@ jobs:
 
       - run: npm ci
 
+      # Every build gets a new version: <major.minor from tauri.conf.json>.<run number>, e.g. 1.0.9.
+      # A big change: raise major/minor in tauri.conf.json (2.0.0). Both jobs of a run share the
+      # number, so they land in the same release. Not committed: the repo keeps <major.minor>.0.
+      - name: Version
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs"), f = "src-tauri/tauri.conf.json", c = JSON.parse(fs.readFileSync(f, "utf8"));
+            const [major, minor] = c.version.split(".");
+            c.version = `${major}.${minor}.${process.env.GITHUB_RUN_NUMBER}`;
+            fs.writeFileSync(f, JSON.stringify(c, null, 2) + "\n");
+            console.log(c.version);
+          '
+
       - uses: tauri-apps/tauri-action@v1
         env:
           # Fine-grained token: only ams-desktop-releases, Contents read/write (this repo's own
