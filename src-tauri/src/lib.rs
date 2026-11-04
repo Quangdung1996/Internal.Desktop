@@ -2,7 +2,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 #[cfg(target_os = "macos")]
 use tauri::menu::{AboutMetadata, HELP_SUBMENU_ID};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconEvent};
@@ -939,6 +939,16 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     return Ok(());
   };
   // Clicks are handled by the app-wide `on_menu_event` (`on_menu`), which also sees the macOS menu bar.
+  // Trợ giúp: Windows has no menu bar (no Help menu), so the version and the contact live here too.
+  let help = Submenu::with_items(
+    app,
+    "Trợ giúp",
+    true,
+    &[
+      &MenuItem::new(app, format!("Phiên bản {}", app.package_info().version), false, None::<&str>)?,
+      &MenuItem::with_id(app, CONTACT_MENU, format!("Gặp lỗi? Liên hệ: {SUPPORT_EMAIL}"), true, None::<&str>)?,
+    ],
+  )?;
   let menu = Menu::with_items(
     app,
     &[
@@ -946,6 +956,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
       &MenuItem::with_id(app, "chat", "Mở Chat", true, None::<&str>)?,
       &PredefinedMenuItem::separator(app)?,
       &MenuItem::with_id(app, SETTINGS_MENU, "Cài đặt…", true, None::<&str>)?,
+      &help,
       &PredefinedMenuItem::separator(app)?,
       &MenuItem::with_id(app, "quit", "Thoát", true, None::<&str>)?,
     ],
@@ -966,7 +977,7 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 
 const SETTINGS_MENU: &str = "settings";
 const CONTACT_MENU: &str = "contact";
-/// Help ▸ contact (macOS) and the Settings footer (every OS) for bug reports.
+/// Help ▸ contact (macOS), tray ▸ Trợ giúp and the Settings footer (every OS) for bug reports.
 const SUPPORT_EMAIL: &str = "dung.bui@agari.com.vn";
 
 /// Every menu click, tray and macOS menu bar alike.
