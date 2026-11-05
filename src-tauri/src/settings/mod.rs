@@ -1,4 +1,4 @@
-//! The "Cài đặt" window: a small page bundled in the app (src-tauri/settings.html), not the AMS site,
+//! The "Cài đặt" window: a small page bundled in the app (settings.html, next to this file), not the AMS site,
 //! so it works offline and needs no FE change. Opened from the macOS app menu (AMS ▸ Cài đặt…, Cmd+,)
 //! and from the tray on every OS (Windows has no menu bar).
 //!
@@ -19,17 +19,20 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_opener::OpenerExt;
 
 pub const LABEL: &str = "settings";
-/// Registered in lib.rs. A page served by an app-registered protocol counts as local, so it can
+/// Registered in lib.rs `run`. A page served by an app-registered protocol counts as local, so it can
 /// invoke the commands below; capabilities/settings.json grants the window `core:default` only.
 pub const PROTOCOL: &str = "amssettings";
-/// Given to the OS autostart entry (lib.rs plugin setup): tells a login launch from a manual one.
+/// Given to the OS autostart entry (lib.rs `run`, autostart plugin): tells a login launch from a manual one.
 pub const AUTOSTART_ARG: &str = "--autostart";
 
-const PAGE: &str = include_str!("../settings.html");
+const PAGE: &str = include_str!("settings.html");
 /// Served by the same protocol: the start page (logo + loading bar) the main window opens on, also
-/// shown when a page never loads (lib.rs `watch_load`); it warns when offline and goes on to the site.
-const OFFLINE_PAGE: &str = include_str!("../offline.html");
-const LOGO: &[u8] = include_bytes!("../icons/128x128@2x.png");
+/// shown when a page never loads (offline `watch_load`); it warns when offline and goes on to the site.
+const OFFLINE_PAGE: &str = include_str!("../offline/offline.html");
+const LOGO: &[u8] = include_bytes!("../../icons/128x128@2x.png");
+/// Trợ giúp ▸ "Hướng dẫn sử dụng": shortcuts and menus of the OS it runs on (`open_guide`).
+const GUIDE_PAGE: &str = include_str!("guide.html");
+const GUIDE_LABEL: &str = "guide";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -44,6 +47,8 @@ pub struct Prefs {
   pub auto_update: bool,
   /// Closing the main window keeps AMS in the tray (notifications keep arriving); off: it quits.
   pub close_to_tray: bool,
+  /// Where downloads are saved (menu ▸ "Thư mục lưu file tải về…"); None: the OS Downloads folder.
+  pub download_dir: Option<PathBuf>,
 }
 
 impl Default for Prefs {
@@ -54,6 +59,7 @@ impl Default for Prefs {
       start_hidden: false,
       auto_update: true,
       close_to_tray: true,
+      download_dir: None,
     }
   }
 }
@@ -114,6 +120,7 @@ pub fn serve(request: &tauri::http::Request<Vec<u8>>) -> Response<Vec<u8>> {
   let (body, kind) = match request.uri().path() {
     "/" | "/index.html" => (PAGE.as_bytes(), HTML),
     "/offline" => (OFFLINE_PAGE.as_bytes(), HTML),
+    "/guide" => (GUIDE_PAGE.as_bytes(), HTML),
     "/logo.png" => (LOGO, "image/png"),
     _ => return Response::builder().status(StatusCode::NOT_FOUND).body(Vec::new()).unwrap_or_default(),
   };
@@ -156,6 +163,27 @@ pub fn open(app: &AppHandle) {
     .build();
   if let Err(e) = built {
     log::error!("opening the settings window failed: {e}");
+  }
+}
+
+/// One guide window: a second open brings it forward. Not the settings window, so no commands.
+pub fn open_guide(app: &AppHandle) {
+  if let Some(window) = app.get_webview_window(GUIDE_LABEL) {
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+    return;
+  }
+  let mut url = page_url();
+  url.set_path("/guide");
+  let built = WebviewWindowBuilder::new(app, GUIDE_LABEL, WebviewUrl::CustomProtocol(url))
+    .title("Hướng dẫn sử dụng AMS")
+    .inner_size(640.0, 680.0)
+    .min_inner_size(480.0, 400.0)
+    .center()
+    .build();
+  if let Err(e) = built {
+    log::error!("opening the guide window failed: {e}");
   }
 }
 
@@ -225,7 +253,7 @@ pub async fn test_notification(app: AppHandle, window: Window) -> Result<(), Str
   // A fresh tag each time: the duplicate guard must not swallow a second test.
   let tag = format!("test-{:?}", std::time::SystemTime::now());
   let body = "Đây là thông báo thử. Bạn thấy nó nghĩa là thông báo đã hoạt động.".to_string();
-  crate::deliver_notification(app, "AMS".to_string(), body, tag, None).await;
+  crate::notifications::deliver_notification(app, "AMS".to_string(), body, tag, None).await;
   Ok(())
 }
 
@@ -243,13 +271,57 @@ pub fn open_notification_settings(app: AppHandle, window: Window) -> Result<(), 
   app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
-/// The log files (lib.rs: log plugin, every build) for the user to send to IT.
+/// The log files (lib.rs `run`: log plugin, every build) for the user to send to IT.
 #[tauri::command]
 pub fn open_log_folder(app: AppHandle, window: Window) -> Result<(), String> {
   from_settings(&window)?;
   let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
   std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
   app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Where downloads go: the chosen folder if it still exists, else the OS Downloads folder.
+pub fn download_dir(app: &AppHandle) -> PathBuf {
+  prefs(app)
+    .download_dir
+    .filter(|dir| dir.is_dir())
+    .or_else(|| app.path().download_dir().ok())
+    .or_else(|| app.path().home_dir().ok())
+    .unwrap_or_default()
+}
+
+/// Menu ▸ "Thư mục lưu file tải về…": a folder picker (starting at the current folder); the choice
+/// is saved and confirmed. Non-blocking: menu clicks arrive on the main thread.
+pub fn choose_download_dir(app: &AppHandle) {
+  let handle = app.clone();
+  app.dialog().file().set_title("Chọn thư mục lưu file tải về").set_directory(download_dir(app)).pick_folder(
+    move |folder| {
+      let Some(dir) = folder.and_then(|f| f.into_path().ok()) else {
+        return; // cancelled
+      };
+      let state = handle.state::<PrefsState>();
+      let mut prefs = state.0.lock().unwrap_or_else(|e| e.into_inner());
+      let mut next = prefs.clone();
+      next.download_dir = Some(dir.clone());
+      let message = match save(&handle, &next) {
+        Ok(()) => {
+          *prefs = next;
+          format!("File tải về sẽ được lưu vào:\n{}", dir.display())
+        }
+        Err(e) => format!("Không lưu được lựa chọn: {e}"),
+      };
+      drop(prefs);
+      handle.dialog().message(message).title("Thư mục tải về").show(|_| {});
+    },
+  );
+}
+
+/// Menu ▸ "Mở thư mục tải về".
+pub fn open_download_dir(app: &AppHandle) {
+  let dir = download_dir(app);
+  if let Err(e) = app.opener().open_path(dir.to_string_lossy(), None::<&str>) {
+    log::error!("opening the download folder failed: {e}");
+  }
 }
 
 /// "Xoá dữ liệu và đăng nhập lại", after a confirmation: cookies, cache and storage of the AMS
@@ -272,7 +344,7 @@ pub async fn clear_data(app: AppHandle, window: Window) -> Result<bool, String> 
   if !confirmed {
     return Ok(false);
   }
-  crate::reset_web_data(&app).map_err(|e| e.to_string())?;
+  crate::window::reset_web_data(&app).map_err(|e| e.to_string())?;
   Ok(true)
 }
 
@@ -296,11 +368,23 @@ pub struct UpdateCheck {
 #[tauri::command]
 pub async fn check_update(app: AppHandle, window: Window) -> Result<UpdateCheck, String> {
   from_settings(&window)?;
-  let Some(update) = crate::find_update(&app).await.map_err(update_error)? else {
+  let Some(update) = crate::updater::find_update(&app).await.map_err(update_error)? else {
     return Ok(UpdateCheck { available: None });
   };
   let available = Some(update.version.clone());
   // The prompt blocks until answered: its own thread, so the page gets its answer now.
-  std::thread::spawn(move || crate::offer_update(&app, update));
+  std::thread::spawn(move || crate::updater::offer_update(&app, update));
   Ok(UpdateCheck { available })
+}
+
+#[cfg(test)]
+mod tests {
+  #[test]
+  fn guide_page_is_served() {
+    let request = tauri::http::Request::builder().uri("amssettings://localhost/guide").body(Vec::new()).unwrap();
+    let response = super::serve(&request);
+    assert_eq!(response.status(), 200);
+    let page = String::from_utf8_lossy(response.body());
+    assert!(page.contains("Hướng dẫn sử dụng AMS") && page.contains(r#"data-os="mac""#) && page.contains(r#"data-os="win""#));
+  }
 }

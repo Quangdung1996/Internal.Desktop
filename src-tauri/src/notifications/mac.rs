@@ -21,7 +21,7 @@ use tauri::AppHandle;
 /// `userNotificationCenter:didActivateNotification:`. mac-notification-sys reports it only to a
 /// caller still blocked waiting on that one notification, which the notification plugin gives up on
 /// (its click never reached `on_action`). So the click is taken here, matched to the AMS
-/// notification by its shown title + text (`crate::on_notification_click_by_text`), and the
+/// notification by its shown title + text (`crate::notifications::on_notification_click_by_text`), and the
 /// original method still runs (it clears the notification).
 static APP: OnceLock<AppHandle> = OnceLock::new();
 static ORIGINAL_DID_ACTIVATE: OnceLock<Imp> = OnceLock::new();
@@ -34,7 +34,7 @@ unsafe extern "C-unwind" fn did_activate(this: *mut AnyObject, cmd: Sel, center:
     let title: Option<Retained<NSString>> = unsafe { msg_send![note, title] };
     let body: Option<Retained<NSString>> = unsafe { msg_send![note, informativeText] };
     let text = |s: Option<Retained<NSString>>| s.map(|s| s.to_string()).unwrap_or_default();
-    crate::on_notification_click_by_text(app, &text(title), &text(body));
+    crate::notifications::on_notification_click_by_text(app, &text(title), &text(body));
   }
   if let Some(original) = ORIGINAL_DID_ACTIVATE.get() {
     // SAFETY: the implementation this method had before, with the same signature.

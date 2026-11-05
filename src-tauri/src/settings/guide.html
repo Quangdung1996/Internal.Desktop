@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hướng dẫn sử dụng AMS</title>
+<!-- Trợ giúp ▸ "Hướng dẫn sử dụng" (src/settings/mod.rs open_guide), bundled in the binary: works offline.
+     One section per OS; the script shows the one this app runs on. Keep it in step with the menus
+     and shortcuts in src/menu/ (window_menu, setup_app_menu, view_items) and src/window/ (TOGGLE_SHORTCUT). -->
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --text: #1d1d1f;
+    --muted: #6e6e73;
+    --line: #e5e5ea;
+    --key-bg: #f2f2f7;
+    --key-border: #c7c7cc;
+    --accent: #067179;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1e1e20;
+      --text: #f5f5f7;
+      --muted: #98989d;
+      --line: #3a3a3c;
+      --key-bg: #2c2c2e;
+      --key-border: #48484a;
+      --accent: #4fb3ba;
+    }
+  }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 20px 24px 28px; }
+  h1 { margin: 0 0 4px; font-size: 20px; color: var(--accent); }
+  .sub { margin: 0 0 18px; color: var(--muted); }
+  h2 { margin: 22px 0 8px; font-size: 15px; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td:first-child { width: 42%; padding-right: 12px; white-space: nowrap; }
+  kbd { display: inline-block; min-width: 1.4em; padding: 1px 6px; border: 1px solid var(--key-border);
+    border-bottom-width: 2px; border-radius: 5px; background: var(--key-bg); text-align: center;
+    font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  ul { margin: 0; padding-left: 20px; }
+  li { margin: 3px 0; }
+  .menu { font-weight: 600; }
+  footer { margin-top: 24px; color: var(--muted); font-size: 12.5px; }
+  [data-os] { display: none; }
+  body.mac [data-os="mac"], body.win [data-os="win"] { display: block; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Hướng dẫn sử dụng AMS</h1>
+  <p class="sub" data-os="mac">Dành cho macOS</p>
+  <p class="sub" data-os="win">Dành cho Windows</p>
+
+  <!-- macOS -->
+  <section data-os="mac">
+    <h2>Phím tắt</h2>
+    <table>
+      <tr><td><kbd>⌥</kbd> <kbd>⌘</kbd> <kbd>A</kbd></td><td>Hiện / ẩn AMS từ bất kỳ đâu</td></tr>
+      <tr><td><kbd>⌘</kbd> <kbd>R</kbd></td><td>Tải lại trang</td></tr>
+      <tr><td><kbd>⌘</kbd> <kbd>[</kbd> &nbsp;/&nbsp; <kbd>⌘</kbd> <kbd>]</kbd></td><td>Quay lại / Tiến tới</td></tr>
+      <tr><td><kbd>⌘</kbd> <kbd>+</kbd> &nbsp;/&nbsp; <kbd>⌘</kbd> <kbd>−</kbd></td><td>Phóng to / thu nhỏ chữ</td></tr>
+      <tr><td><kbd>⌘</kbd> <kbd>,</kbd></td><td>Mở Cài đặt</td></tr>
+      <tr><td><kbd>⌃</kbd> <kbd>⌘</kbd> <kbd>F</kbd></td><td>Toàn màn hình</td></tr>
+      <tr><td><kbd>⌘</kbd> <kbd>W</kbd></td><td>Đóng cửa sổ (AMS vẫn chạy trên thanh menu)</td></tr>
+      <tr><td><kbd>⌘</kbd> <kbd>Q</kbd></td><td>Thoát hẳn AMS</td></tr>
+    </table>
+
+    <h2>Menu</h2>
+    <p>Menu nằm ở <b>thanh trên cùng màn hình</b> khi cửa sổ AMS đang được chọn:</p>
+    <ul>
+      <li><span class="menu">AMS</span>: Cài đặt, Thư mục lưu file tải về, Mở thư mục tải về, Thoát</li>
+      <li><span class="menu">View</span>: Tải lại trang, Quay lại, Tiến tới, Mở trang này bằng trình duyệt, Sao chép link trang</li>
+      <li><span class="menu">Help</span>: Hướng dẫn sử dụng, phiên bản, liên hệ khi gặp lỗi</li>
+    </ul>
+
+    <h2>Icon AMS trên thanh menu</h2>
+    <ul>
+      <li>Icon nằm ở góc trên bên phải màn hình, cạnh wifi và pin.</li>
+      <li>Bấm <b>chuột phải</b> (hoặc giữ <kbd>⌃</kbd> rồi bấm): Mở AMS, Mở Chat, Cài đặt, Trợ giúp, Thoát.</li>
+      <li>Bấm chuột trái: mở cửa sổ AMS.</li>
+    </ul>
+
+    <h2>Cần biết</h2>
+    <ul>
+      <li>Đóng cửa sổ không tắt AMS: thông báo chat vẫn đến. Muốn tắt hẳn: <kbd>⌘</kbd> <kbd>Q</kbd>.</li>
+      <li>File tải về được lưu vào thư mục <b>Tải về</b> (Downloads); đổi ở <span class="menu">AMS ▸ Thư mục lưu file tải về…</span></li>
+      <li>Mất mạng: trang mờ đi kèm cảnh báo, có mạng lại tự trở về bình thường.</li>
+    </ul>
+  </section>
+
+  <!-- Windows -->
+  <section data-os="win">
+    <h2>Phím tắt</h2>
+    <table>
+      <tr><td><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>A</kbd></td><td>Hiện / ẩn AMS từ bất kỳ đâu</td></tr>
+      <tr><td><kbd>F5</kbd></td><td>Tải lại trang</td></tr>
+      <tr><td><kbd>Alt</kbd> <kbd>←</kbd> &nbsp;/&nbsp; <kbd>Alt</kbd> <kbd>→</kbd></td><td>Quay lại / Tiến tới</td></tr>
+      <tr><td><kbd>Ctrl</kbd> <kbd>F</kbd></td><td>Tìm trong trang</td></tr>
+      <tr><td><kbd>Ctrl</kbd> <kbd>+</kbd> &nbsp;/&nbsp; <kbd>Ctrl</kbd> <kbd>−</kbd></td><td>Phóng to / thu nhỏ chữ</td></tr>
+    </table>
+
+    <h2>Menu</h2>
+    <p>Menu nằm <b>ngay dưới thanh tiêu đề</b> của cửa sổ AMS và cửa sổ Chat:</p>
+    <ul>
+      <li><span class="menu">AMS</span>: Mở AMS, Mở Chat, Cài đặt, Thư mục lưu file tải về, Mở thư mục tải về, Thoát</li>
+      <li><span class="menu">Xem</span>: Tải lại trang, Quay lại, Tiến tới, Mở trang này bằng trình duyệt, Sao chép link trang</li>
+      <li><span class="menu">Trợ giúp</span>: Hướng dẫn sử dụng, phiên bản, liên hệ khi gặp lỗi</li>
+    </ul>
+
+    <h2>Icon AMS ở khay hệ thống</h2>
+    <ul>
+      <li>Icon nằm ở góc dưới bên phải, cạnh đồng hồ. Không thấy thì bấm mũi tên <b>^</b>.</li>
+      <li>Bấm <b>chuột phải</b>: Mở AMS, Mở Chat, Cài đặt, Trợ giúp, Thoát.</li>
+      <li>Bấm chuột trái: mở cửa sổ AMS.</li>
+      <li>Muốn icon luôn hiện: Settings ▸ Personalization ▸ Taskbar ▸ Other system tray icons ▸ bật AMS.</li>
+    </ul>
+
+    <h2>Cần biết</h2>
+    <ul>
+      <li>Bấm <b>X</b> không tắt AMS: thông báo chat vẫn đến. Muốn tắt hẳn: icon ở khay ▸ <b>Thoát</b>.</li>
+      <li>File tải về được lưu vào thư mục <b>Downloads</b>; đổi ở <span class="menu">AMS ▸ Thư mục lưu file tải về…</span></li>
+      <li>Mất mạng: trang mờ đi kèm cảnh báo, có mạng lại tự trở về bình thường.</li>
+    </ul>
+  </section>
+
+  <footer>Gặp lỗi hoặc cần hỗ trợ? Liên hệ: dung.bui@agari.com.vn</footer>
+</main>
+<script>
+  // WKWebView reports "Macintosh", WebView2 "Windows NT".
+  document.body.classList.add(/Mac/.test(navigator.userAgent) ? "mac" : "win");
+</script>
+</body>
+</html>

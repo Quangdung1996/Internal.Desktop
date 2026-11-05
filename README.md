@@ -10,7 +10,7 @@ app, so auth cookies, SignalR chat and CORS work unchanged.
 **Two update paths:** UI changes ship with every FE deploy (the app loads the live site, nothing
 to install). Only shell changes (this repo) need a new desktop release, delivered by the updater.
 
-## What the shell adds (`src-tauri/src/lib.rs`)
+## What the shell adds (`src-tauri/src/`: one module per concern, page scripts in `src/js/`)
 
 - Chat notifications: `tauri-plugin-notification` replaces `window.Notification` in the page (no FE change). Clicking a notification runs the page's own `onclick` (opens the room in the chat window); on Windows only while the toast is on screen, not from the Action Center.
 - Chat gets one window of its own (like a messenger): the sidebar Chat link, "open in Chat" and the tray all land in it; a room link navigates it, size/position remembered.
@@ -18,11 +18,13 @@ to install). Only shell changes (this repo) need a new desktop release, delivere
 - File links (S3 presigned: attachments, chat files, certificates) download inside the app with a progress notice (bottom right) instead of opening the browser; the browser is the fallback if the download fails. `npm test` checks this script.
 - Close = hide to tray (chat keeps running). Tray: Mở AMS / Mở Chat / Cài đặt… / Trợ giúp (version, bug-report contact) / Thoát. macOS: Dock click reopens.
 - Deep links: `ams://<path>?<query>` opens that page of the site (e.g. `ams://chat/<roomId>` in the chat window, others in the main window); only path/query are used, the origin stays the site's. Registered by the installer; nothing generates these links yet (emails/FE must).
+- Xem menu (macOS: View, Windows: in the window menu bar): reload (⌘R / F5), back / forward (⌘[ ⌘] / Alt+← →), open the page in the browser, copy its link.
 - Single instance, remembered window size/position, Ctrl +/- zoom.
 - Global shortcut ⌥⌘A (macOS) / Ctrl+Alt+A (Windows): AMS in front goes to the tray, otherwise it comes forward. Skipped (logged) if another app holds it.
-- Start: the main window opens on a bundled page (`src-tauri/offline.html`: logo + loading bar) that goes on to the site once it answers. Offline at launch it stays there with a "Mất kết nối internet" warning and retries every 5 s; a main/chat page that never loads within 10 s also lands there.
+- Start: the main window opens on a bundled page (`src-tauri/src/offline/offline.html`: logo + loading bar) that goes on to the site once it answers. Offline at launch it stays there with a "Mất kết nối internet" warning and retries every 5 s; a main/chat page that never loads within 10 s also lands there.
 - Offline while in use: the page is kept, dimmed and blurred with a "Mất kết nối internet" warning (clicks held) until the connection is back; nothing navigates.
-- macOS: downloads saved to ~/Downloads and revealed in Finder; `window.print` works (Tauri print API); camera, mic, location declared in `Info.plist` + `Entitlements.plist`.
+- Downloads (both OSes) go to the folder chosen in the menu (macOS: AMS ▸ / Windows: AMS ▸ "Thư mục lưu file tải về…", default the OS Downloads folder), never overwrite (`name (1).ext`), and are shown in Finder / Explorer when done; "Mở thư mục tải về" opens it.
+- macOS: `window.print` works (Tauri print API); camera, mic, location declared in `Info.plist` + `Entitlements.plist`.
 - Auto update: checks `releases/latest` of `ams-desktop-releases` at startup and every 6 h, asks before installing.
 
 ## Release (no local toolchain needed)

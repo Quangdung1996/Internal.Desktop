@@ -1,5 +1,5 @@
 fn main() {
-  // AMS_FILE_HOST: the S3 endpoint host whose links download inside the app (lib.rs LINK_SCRIPT).
+  // AMS_FILE_HOST: the S3 endpoint host whose links download inside the app (src/links/link.js).
   // Kept out of the repo: from the environment (CI: secret AMS_FILE_HOST) or the repo-root .env
   // (local, gitignored). Unset: those links open in the browser, as for any other site.
   println!("cargo:rerun-if-env-changed=AMS_FILE_HOST");
