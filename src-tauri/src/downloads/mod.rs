@@ -20,10 +20,11 @@ static DOWNLOADS: Mutex<Vec<(String, PathBuf)>> = Mutex::new(Vec::new());
 pub(crate) fn on_download(webview: Webview, event: DownloadEvent) -> bool {
   match event {
     DownloadEvent::Requested { url, destination } => {
-      let name = destination.file_name().map(|n| n.to_owned()).unwrap_or_else(|| "download".into());
+      let default_dir = webview.app_handle().path().download_dir().unwrap_or_default();
+      let name = original_name(destination, &default_dir);
       let dir = settings::download_dir(webview.app_handle());
       let _ = std::fs::create_dir_all(&dir);
-      let path = free_path(&dir, Path::new(&name));
+      let path = free_path(&dir, &name);
       let mut downloads = DOWNLOADS.lock().unwrap_or_else(|e| e.into_inner());
       downloads.push((url.to_string(), path.clone()));
       if downloads.len() > 50 {
@@ -51,6 +52,29 @@ pub(crate) fn on_download(webview: Webview, event: DownloadEvent) -> bool {
   true
 }
 
+/// The name the page asked for. wry (macOS) and WebView2 (Windows) hand over a destination already
+/// made unique in the OS Downloads folder ("x.pdf" taken there -> "x (1).pdf"), before the folder
+/// chosen here is known. So "base (N).ext" whose "base.ext" exists in that default folder is taken
+/// back to "base.ext"; `free_path` then numbers it only if the chosen folder has it. (wry splits the
+/// extension at the first dot, WebView2 at the last: the lazy `base` matches both.)
+/// ponytail: a file really named "x (1).pdf" while "x.pdf" sits in Downloads is saved as "x.pdf".
+fn original_name(destination: &Path, default_dir: &Path) -> PathBuf {
+  let Some(name) = destination.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+    return PathBuf::from("download");
+  };
+  let numbered = name.find(" (").and_then(|start| {
+    let close = start + name[start..].find(')')?;
+    let digits = &name[start + 2..close];
+    let rest = &name[close + 1..];
+    let is_number = !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit());
+    (is_number && (rest.is_empty() || rest.starts_with('.'))).then(|| format!("{}{rest}", &name[..start]))
+  });
+  match numbered {
+    Some(original) if default_dir.join(&original).exists() => PathBuf::from(original),
+    _ => PathBuf::from(name),
+  }
+}
+
 /// `dir/name`, or `dir/name (1).ext`, `(2)`… if taken: a download never overwrites a file.
 fn free_path(dir: &Path, name: &Path) -> PathBuf {
   let path = dir.join(name);
@@ -67,7 +91,7 @@ fn free_path(dir: &Path, name: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-  use super::free_path;
+  use super::{free_path, original_name};
   use std::path::Path;
 
   #[test]
@@ -82,5 +106,24 @@ mod tests {
     assert_eq!(free_path(&dir, name), dir.join("Báo cáo tháng (2).xlsx"));
     assert_eq!(free_path(&dir, Path::new("README")), dir.join("README"));
     std::fs::remove_dir_all(&dir).unwrap();
+  }
+
+  #[test]
+  fn original_name_undoes_the_engine_numbering() {
+    let downloads = std::env::temp_dir().join(format!("ams-original-name-{}", std::process::id()));
+    std::fs::create_dir_all(&downloads).unwrap();
+    std::fs::write(downloads.join("Báo cáo.pdf"), "").unwrap();
+    std::fs::write(downloads.join("bang.luong.xlsx"), "").unwrap();
+    let name = |n: &str| original_name(&downloads.join(n), &downloads);
+    // numbered because Downloads has the original -> the original
+    assert_eq!(name("Báo cáo (1).pdf"), Path::new("Báo cáo.pdf"));
+    assert_eq!(name("Báo cáo (12).pdf"), Path::new("Báo cáo.pdf"));
+    assert_eq!(name("bang (1).luong.xlsx"), Path::new("bang.luong.xlsx")); // wry: first dot
+    assert_eq!(name("bang.luong (1).xlsx"), Path::new("bang.luong.xlsx")); // WebView2: last dot
+    // not the engine's doing -> unchanged
+    assert_eq!(name("Hợp đồng (1).pdf"), Path::new("Hợp đồng (1).pdf")); // no "Hợp đồng.pdf" there
+    assert_eq!(name("Đơn (bản nháp).pdf"), Path::new("Đơn (bản nháp).pdf"));
+    assert_eq!(name("Báo cáo.pdf"), Path::new("Báo cáo.pdf"));
+    std::fs::remove_dir_all(&downloads).unwrap();
   }
 }
