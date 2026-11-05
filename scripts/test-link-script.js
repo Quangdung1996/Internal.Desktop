@@ -44,7 +44,13 @@ const fileUrl = `https://bucket.${FILE_HOST}/ams/leave/0123456789abcdef012345678
   assert.strictEqual(window.open(fileUrl, "_blank", "noopener"), null, "file link must not open a window");
   await new Promise((r) => setTimeout(r, 50));
   console.log(log.join("\n"));
-  assert.deepStrictEqual(log, ["⬇ Đang tải Đơn nghỉ.pdf…", "⬇ Đang tải Đơn nghỉ.pdf… 33%", "⬇ Đang tải Đơn nghỉ.pdf… 66%", "⬇ Đang tải Đơn nghỉ.pdf… 100%", "✓ Đã tải xong Đơn nghỉ.pdf"]);
+  assert.deepStrictEqual(log, ["⬇ Đang tải Đơn nghỉ.pdf…", "⬇ Đang tải Đơn nghỉ.pdf… 33%", "⬇ Đang tải Đơn nghỉ.pdf… 66%", "⬇ Đang tải Đơn nghỉ.pdf… 100%"]);
+  const tray = document.body.children[0];
+  assert.strictEqual(tray.children.length, 0, "progress line removed once handed to the save");
+  // Rust (downloads::on_download) reports the saved file through window.__amsNotice
+  window.__amsNotice("✓ Đã tải xong Đơn nghỉ (1).pdf", "done");
+  assert.strictEqual(log.at(-1), "✓ Đã tải xong Đơn nghỉ (1).pdf");
+  assert.strictEqual(tray.children.length, 1);
   assert.deepStrictEqual(clicked, [{ href: "blob:fake", download: "Đơn nghỉ.pdf" }]);
   assert.strictEqual(opened.length, 0, "no browser on success");
   mode = "fail"; log.length = 0;

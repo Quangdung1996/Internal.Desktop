@@ -53,6 +53,65 @@ pub fn paint(window: Window) {
   }
 }
 
+/// Windows: the menu bar of the main and chat windows (menu::window_menu) in a light tint of the
+/// teal. Only its background can change: the item text stays the system's dark (white text would
+/// need owner-drawn items), so a dark teal would be unreadable. In Windows dark mode the menu
+/// library draws the bar itself and this has no effect. Called right after the window is built,
+/// when its menu is attached.
+#[cfg(windows)]
+pub fn paint_menu_bar(window: &tauri::WebviewWindow) {
+  use std::ffi::c_void;
+  use std::sync::OnceLock;
+
+  #[repr(C)]
+  struct MenuInfo {
+    cb_size: u32,
+    f_mask: u32,
+    dw_style: u32,
+    cy_max: u32,
+    hbr_back: *mut c_void,
+    dw_context_help_id: u32,
+    dw_menu_data: usize,
+  }
+  #[link(name = "user32")]
+  unsafe extern "system" {
+    fn GetMenu(hwnd: *mut c_void) -> *mut c_void;
+    fn SetMenuInfo(menu: *mut c_void, info: *const MenuInfo) -> i32;
+    fn DrawMenuBar(hwnd: *mut c_void) -> i32;
+  }
+  #[link(name = "gdi32")]
+  unsafe extern "system" {
+    fn CreateSolidBrush(color: u32) -> *mut c_void;
+  }
+  const MIM_BACKGROUND: u32 = 0x0000_0002;
+  // #E6F1F2 as COLORREF (0x00BBGGRR).
+  const TINT: u32 = 0x00F2_F1E6;
+  // One brush for every window, never freed: it lives as long as the app.
+  static BRUSH: OnceLock<usize> = OnceLock::new();
+
+  let Ok(hwnd) = window.hwnd() else { return };
+  // SAFETY: valid HWND from tauri; GetMenu returns null for a window without a menu bar; the
+  // MENUINFO is fully initialised with its own size; the brush outlives every menu.
+  unsafe {
+    let menu = GetMenu(hwnd.0);
+    if menu.is_null() {
+      return;
+    }
+    let brush = *BRUSH.get_or_init(|| CreateSolidBrush(TINT) as usize);
+    let info = MenuInfo {
+      cb_size: size_of::<MenuInfo>() as u32,
+      f_mask: MIM_BACKGROUND,
+      dw_style: 0,
+      cy_max: 0,
+      hbr_back: brush as *mut c_void,
+      dw_context_help_id: 0,
+      dw_menu_data: 0,
+    };
+    SetMenuInfo(menu, &info);
+    DrawMenuBar(hwnd.0);
+  }
+}
+
 /// Linux is not shipped; keeps the crate building there.
 #[cfg(not(any(target_os = "macos", windows)))]
 pub fn paint(_window: Window) {}

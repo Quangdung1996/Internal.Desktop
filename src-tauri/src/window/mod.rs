@@ -105,7 +105,9 @@ pub(crate) fn open_chat(app: &AppHandle, url: Option<Url>) {
   };
   match with_handlers(builder, app).build() {
     // Windows: its own taskbar button gets the current count overlay.
-    Ok(_) => {
+    Ok(_chat) => {
+      #[cfg(windows)]
+      title_bar::paint_menu_bar(&_chat);
       apply_badge(app);
       watch_load(app, CHAT, url);
     }
@@ -177,7 +179,9 @@ pub(crate) fn build_main_window(app: &AppHandle, visible: bool) -> tauri::Result
   let builder = WebviewWindowBuilder::from_config(app, &config)?.visible(visible);
   #[cfg(windows)]
   let builder = builder.menu(window_menu(app)?);
-  with_handlers(builder, app).build()?;
+  let _main = with_handlers(builder, app).build()?;
+  #[cfg(windows)]
+  title_bar::paint_menu_bar(&_main);
   watch_load(app, MAIN, site);
   Ok(())
 }

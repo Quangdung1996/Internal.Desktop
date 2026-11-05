@@ -1,5 +1,6 @@
 //! Downloads: every download goes to the download folder (menu ▸ "Thư mục lưu file tải về…",
-//! default the OS Downloads folder) under a free name, and is shown in Finder / Explorer when done.
+//! default the OS Downloads folder) under a free name; when done the page shows "Đã tải xong" (the
+//! folder is not opened: menu ▸ "Mở thư mục tải về" does that).
 //! macOS needs a handler (WKWebView cancels downloads without one) and reports no path when done,
 //! hence DOWNLOADS. On Windows the handler replaces WebView2's download flyout; file links have the
 //! page's own notice (links/link.js).
@@ -34,9 +35,16 @@ pub(crate) fn on_download(webview: Webview, event: DownloadEvent) -> bool {
       let mut downloads = DOWNLOADS.lock().unwrap_or_else(|e| e.into_inner());
       let started = downloads.iter().position(|(u, _)| *u == url.as_str()).map(|at| downloads.remove(at).1);
       drop(downloads);
-      if let (true, Some(path)) = (success, path.or(started)) {
-        let _ = tauri_plugin_opener::reveal_item_in_dir(path);
-      }
+      let name = path.or(started).and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
+      let text = match (success, name) {
+        (true, Some(name)) => format!("✓ Đã tải xong {name}"),
+        (true, None) => "✓ Đã tải xong".to_string(),
+        (false, Some(name)) => format!("⚠ Tải không thành công {name}"),
+        (false, None) => "⚠ Tải không thành công".to_string(),
+      };
+      let end = if success { "done" } else { "error" };
+      // links/link.js defines __amsNotice in every app window.
+      let _ = webview.eval(format!("window.__amsNotice?.({text:?}, {end:?})"));
     }
     _ => {}
   }

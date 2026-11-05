@@ -26,7 +26,9 @@
   // What the page shows as this link's file name (an attribute, never free text).
   const hintOf = (a) => [a.getAttribute("download"), a.getAttribute("title"), a.querySelector("[title]")?.getAttribute("title")]
     .map((v) => (v || "").trim()).find((v) => extOf(v)) || "";
-  // One line per download, bottom right: progress, then done / failed. Clicks pass through.
+  // One line per download, bottom right: progress here, "done" from Rust once the file is saved
+  // (downloads::on_download, via window.__amsNotice: every download, not only these links).
+  // Clicks pass through.
   let tray = null;
   const notice = () => {
     if (!tray || !tray.isConnected) {
@@ -43,6 +45,7 @@
       "box-shadow:0 2px 8px rgba(0,0,0,.25);overflow-wrap:anywhere";
     tray.appendChild(line);
     return (text, end) => {
+      if (end === "remove") return line.remove();
       line.textContent = text;
       if (end) {
         if (end === "error") line.style.background = '#b45309';
@@ -50,6 +53,7 @@
       }
     };
   };
+  Object.defineProperty(window, "__amsNotice", { value: (text, end) => notice()(String(text), end) });
   const download = async (url, hint) => {
     const name = fileName(url, hint);
     const show = notice();
@@ -77,7 +81,7 @@
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
-      show(`✓ Đã tải xong ${name}`, "done");
+      show("", "remove"); // the save itself reports "done" (downloads::on_download)
     } catch {
       show(`⚠ Không tải được ${name} trong app, đang mở bằng trình duyệt…`, "error");
       openLink(url.href); // CORS / network / expired link: the browser, as before
