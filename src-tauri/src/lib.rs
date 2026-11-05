@@ -452,19 +452,89 @@ fn build_main_window(app: &AppHandle, visible: bool) -> tauri::Result<()> {
 /// WKWebView never reports `<a target="_blank" rel="noopener">` (the FE sidebar Chat link) to
 /// `on_new_window`: the click is dropped silently. This script catches such clicks, and chat
 /// `window.open` calls, and hands them to `open_link`. Without IPC the page navigates in place.
+/// Files: the FE opens S3 presigned links (attachments, chat files, certificates) in a new tab,
+/// which here meant the default browser (another host than AMS). They are downloaded in place
+/// instead: fetch (the bucket's CORS allows the site) -> blob -> a[download], which the app saves
+/// (macOS: ~/Downloads, revealed in Finder; Windows: WebView2's download flyout).
+/// Colors in this script are in single quotes: a double quote followed by `#` ends the raw string.
 const LINK_SCRIPT: &str = r#"(() => {
   const isChat = (u) => u.origin === location.origin && (u.pathname === "/chat" || u.pathname.startsWith("/chat/"));
+  // The S3 endpoint (AwsS3Settings.Endpoint in Internal.Backend), filled in from AMS_FILE_HOST at
+  // build time (build.rs); <bucket>.<endpoint> too (virtual-hosted URLs). Empty: no file host.
+  const FILE_HOST = "__AMS_FILE_HOST__";
+  const isFile = (u) => FILE_HOST !== "" && (u.hostname === FILE_HOST || u.hostname.endsWith("." + FILE_HOST));
   const openLink = (href) => {
     const ipc = window.__TAURI_INTERNALS__;
     if (!ipc) { location.assign(href); return; }
     ipc.invoke("open_link", { url: href }).catch(() => location.assign(href));
   };
+  // Keys are <prefix>/<folder>/<32 hex>_<original name> (AwsS3Service.GenerateFileKey).
+  const fileName = (u) => decodeURIComponent(u.pathname.split("/").pop() || "file").replace(/^[0-9a-f]{32}_/, "");
+  // One line per download, bottom right: progress, then done / failed. Clicks pass through.
+  let tray = null;
+  const notice = () => {
+    if (!tray || !tray.isConnected) {
+      tray = document.createElement("div");
+      tray.setAttribute("role", "status");
+      tray.setAttribute("aria-live", "polite");
+      tray.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483646;display:flex;" +
+        "flex-direction:column;gap:8px;max-width:min(360px,calc(100vw - 32px));pointer-events:none";
+      (document.body || document.documentElement).appendChild(tray);
+    }
+    const line = document.createElement("div");
+    line.style.cssText = "padding:10px 14px;border-radius:8px;background:#067179;color:#fff;" +
+      "font:500 13px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;" +
+      "box-shadow:0 2px 8px rgba(0,0,0,.25);overflow-wrap:anywhere";
+    tray.appendChild(line);
+    return (text, end) => {
+      line.textContent = text;
+      if (end) {
+        if (end === "error") line.style.background = '#b45309';
+        setTimeout(() => line.remove(), 5000);
+      }
+    };
+  };
+  const download = async (url) => {
+    const name = fileName(url);
+    const show = notice();
+    show(`⬇ Đang tải ${name}…`);
+    try {
+      const res = await fetch(url.href);
+      if (!res.ok || !res.body) throw new Error(String(res.status));
+      // Content-Length is readable cross-origin (CORS-safelisted): a percentage when the server sends it.
+      const total = Number(res.headers.get("content-length")) || 0;
+      const reader = res.body.getReader();
+      const chunks = [];
+      let received = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        show(`⬇ Đang tải ${name}… ${total ? Math.floor((received * 100) / total) + "%" : Math.round(received / 1024) + " KB"}`);
+      }
+      const blobUrl = URL.createObjectURL(new Blob(chunks, { type: res.headers.get("content-type") || "" }));
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+      show(`✓ Đã tải xong ${name}`, "done");
+    } catch {
+      show(`⚠ Không tải được ${name} trong app, đang mở bằng trình duyệt…`, "error");
+      openLink(url.href); // CORS / network / expired link: the browser, as before
+    }
+  };
   document.addEventListener("click", (e) => {
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     const a = e.target instanceof Element ? e.target.closest('a[target="_blank"]') : null;
-    if (!a || !a.href || a.hasAttribute("download")) return;
+    if (!a || !a.href) return;
     let url;
     try { url = new URL(a.href, location.href); } catch { return; }
+    if (isFile(url)) { e.preventDefault(); download(url); return; }
+    if (a.hasAttribute("download")) return;
     if (url.protocol !== "http:" && url.protocol !== "https:") return; // blob: stays with on_new_window
     e.preventDefault();
     openLink(url.href);
@@ -473,6 +543,7 @@ const LINK_SCRIPT: &str = r#"(() => {
   window.open = function (href, ...rest) {
     try {
       const url = new URL(String(href ?? ""), location.href);
+      if (isFile(url)) { download(url); return null; }
       if (isChat(url)) {
         if (isChat(new URL(location.href))) { location.assign(url.href); return window; }
         openLink(url.href);
@@ -482,6 +553,13 @@ const LINK_SCRIPT: &str = r#"(() => {
     return nativeOpen.call(window, href, ...rest);
   };
 })();"#;
+
+/// LINK_SCRIPT with the file host from build.rs (AMS_FILE_HOST, never in the repo).
+fn link_script() -> &'static str {
+  static SCRIPT: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| LINK_SCRIPT.replace("__AMS_FILE_HOST__", option_env!("AMS_FILE_HOST").unwrap_or("")));
+  &SCRIPT
+}
 
 /// `window.desktopApp` is the FE's "running in the desktop app" flag: absent in a browser, so FE code
 /// behind `window.desktopApp?.` never runs on the web.
@@ -862,7 +940,7 @@ fn with_handlers<'a>(builder: WindowBuilder<'a>, app: &AppHandle) -> WindowBuild
   let app = app.clone();
   let builder = builder
     .initialization_script(DESKTOP_SCRIPT)
-    .initialization_script(LINK_SCRIPT)
+    .initialization_script(link_script())
     // Windows (WebView2): AMS pages get location (attendance check-in) without WebView2's own prompt;
     // Windows still applies its Location privacy setting. macOS never reaches here (wry does not
     // forward geolocation there): GEO_SCRIPT + location.rs answer instead.

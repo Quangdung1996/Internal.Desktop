@@ -15,6 +15,7 @@ to install). Only shell changes (this repo) need a new desktop release, delivere
 - Chat notifications: `tauri-plugin-notification` replaces `window.Notification` in the page (no FE change). Clicking a notification runs the page's own `onclick` (opens the room in the chat window); on Windows only while the toast is on screen, not from the Action Center.
 - Chat gets one window of its own (like a messenger): the sidebar Chat link, "open in Chat" and the tray all land in it; a room link navigates it, size/position remembered.
 - Other `window.open` / `target="_blank"`: `*.agari.com.vn` and `blob:` open in an app window (session kept); other sites open in the default browser. Without this both engines drop the request.
+- File links (S3 presigned: attachments, chat files, certificates) download inside the app with a progress notice (bottom right) instead of opening the browser; the browser is the fallback if the download fails. `npm test` checks this script.
 - Close = hide to tray (chat keeps running). Tray: Mở AMS / Mở Chat / Cài đặt… / Trợ giúp (version, bug-report contact) / Thoát. macOS: Dock click reopens.
 - Deep links: `ams://<path>?<query>` opens that page of the site (e.g. `ams://chat/<roomId>` in the chat window, others in the main window); only path/query are used, the origin stays the site's. Registered by the installer; nothing generates these links yet (emails/FE must).
 - Single instance, remembered window size/position, Ctrl +/- zoom.
@@ -36,6 +37,7 @@ One-time setup:
 - Public repo `Quangdung1996/ams-desktop-releases`: only a README (staff install steps); Issues, Wiki, Projects off. The updater downloads `latest.json` and the installers from its releases anonymously, so this repo (the code) can be private.
 - This repo → Settings → Secrets and variables → Actions → `RELEASES_TOKEN` = fine-grained token (github.com/settings/personal-access-tokens): repository access **only** `ams-desktop-releases`, permission **Contents: Read and write**. It expires: renew it and replace the secret before then, or builds fail at upload.
 - Settings → Secrets and variables → Actions → `TAURI_SIGNING_PRIVATE_KEY` = content of the updater private key (generated with `npx tauri signer generate`, no password; public half is `plugins.updater.pubkey`). Losing that key means installed apps can never update again: keep a backup outside this machine.
+- `AMS_FILE_HOST` = the S3 endpoint host (`AwsS3Settings.Endpoint` in Internal.Backend, host only): its file links download inside the app. Locally the same line goes in a repo-root `.env` (gitignored): `AMS_FILE_HOST=<host>`. Unset: those links open the browser (build prints a warning).
 - macOS signing + notarization secrets: `APPLE_CERTIFICATE` (base64 of the Developer ID Application .p12),
   `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY` (`Developer ID Application: AGARI COMPANY LIMITED (ZGS2BK2B25)`),
   `APPLE_ID`, `APPLE_PASSWORD` (app-specific password, account.apple.com), `APPLE_TEAM_ID` (`ZGS2BK2B25`).

@@ -3,3 +3,5 @@ node_modules
 # Build output of scripts/build-*.sh (installers to hand out, never committed).
 /dist
 .DS_Store
+# Local build settings (AMS_FILE_HOST, ...): never committed, the repo is shared.
+.env

@@ -70,6 +70,9 @@ jobs:
           # Signs the updater artifacts; must match plugins.updater.pubkey in tauri.conf.json.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+          # S3 endpoint host whose file links download inside the app (src-tauri/build.rs). A secret
+          # only to keep it out of this repo and the logs; unset, those links open the browser.
+          AMS_FILE_HOST: ${{ secrets.AMS_FILE_HOST }}
           # macOS: Developer ID signing + notarization (Gatekeeper opens it without "Open Anyway").
           # The env identity overrides bundle.macOS.signingIdentity ("-", ad-hoc for local builds).
           # Ignored by the Windows job.
