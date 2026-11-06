@@ -6,6 +6,8 @@ pub(crate) mod title_bar;
 use std::sync::atomic::AtomicU32;
 use tauri::webview::{PermissionKind, PermissionResponse};
 use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Wry};
+#[cfg(windows)]
+use tauri::{PhysicalPosition, Window};
 use crate::downloads;
 use crate::links::{is_app_url, link_script, open_new_window};
 #[cfg(windows)]
@@ -77,6 +79,8 @@ pub(crate) fn bring_forward(window: &WebviewWindow) {
   );
   let _ = window.unminimize();
   let _ = window.show();
+  #[cfg(windows)]
+  pull_on_screen(&window.as_ref().window());
   // Windows' foreground lock: SetForegroundWindow from an app that is not in front (back from
   // another app, a toast, the tray) only flashes the taskbar button and the window stays behind.
   // Topmost for a moment raises it regardless; set_focus then gives it the keyboard when allowed.
@@ -85,6 +89,52 @@ pub(crate) fn bring_forward(window: &WebviewWindow) {
   let _ = window.set_focus();
   #[cfg(windows)]
   let _ = window.set_always_on_top(false);
+}
+
+#[cfg(windows)]
+const MIN_REACHABLE_TITLE_BAR_WIDTH: i32 = 100;
+#[cfg(windows)]
+const TITLE_BAR_STRIP_HEIGHT: i32 = 40;
+#[cfg(windows)]
+const MIN_REACHABLE_TITLE_BAR_HEIGHT: i32 = 20;
+
+#[cfg(windows)]
+fn overlap(start_a: i32, end_a: i32, start_b: i32, end_b: i32) -> i32 {
+  end_a.min(end_b) - start_a.max(start_b)
+}
+
+#[cfg(windows)]
+pub(crate) fn pull_on_screen(window: &Window) {
+  let placed_by_os = [window.is_minimized(), window.is_maximized(), window.is_fullscreen()]
+    .into_iter()
+    .any(|state| state.unwrap_or(true));
+  if placed_by_os {
+    return;
+  }
+  let (Ok(position), Ok(size), Ok(monitors)) = (window.outer_position(), window.outer_size(), window.available_monitors())
+  else {
+    return;
+  };
+  let title_bar_reachable = monitors.iter().any(|monitor| {
+    let area = monitor.work_area();
+    let (left, top) = (area.position.x, area.position.y);
+    let (right, bottom) = (left + area.size.width as i32, top + area.size.height as i32);
+    overlap(position.x, position.x + size.width as i32, left, right) >= MIN_REACHABLE_TITLE_BAR_WIDTH
+      && overlap(position.y, position.y + TITLE_BAR_STRIP_HEIGHT, top, bottom) >= MIN_REACHABLE_TITLE_BAR_HEIGHT
+  });
+  if title_bar_reachable {
+    return;
+  }
+  let Ok(Some(primary)) = window.primary_monitor() else {
+    return;
+  };
+  let area = primary.work_area();
+  let centered = |start: i32, available: u32, length: u32| start + ((available as i32 - length as i32) / 2).max(0);
+  log::warn!("{} off screen at {position:?}: moved to the primary monitor", window.label());
+  let _ = window.set_position(PhysicalPosition {
+    x: centered(area.position.x, area.size.width, size.width),
+    y: centered(area.position.y, area.size.height, size.height),
+  });
 }
 
 /// The chat as its own window, like a desktop messenger. The FE opens the full chat in a new tab
