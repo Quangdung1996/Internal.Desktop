@@ -1,10 +1,15 @@
 (() => {
   if (window.desktopApp) return;
+  // fileSaved / showFile: a save fires "ams:file-saved" on window (every app window), to check again.
   const invoke = (cmd, args) => window.__TAURI_INTERNALS__?.invoke(cmd, args).catch(() => {});
   Object.defineProperty(window, "desktopApp", {
     value: Object.freeze({
       /** Dock (macOS) / tray tooltip count; 0 clears it. */
       setBadge: (count) => invoke("set_badge", { count: Math.max(0, Math.floor(Number(count) || 0)) }),
+      /** Whether this file link (its presigned URL) was saved by the app and is still on disk. */
+      fileSaved: (url) => invoke("file_saved", { url: String(url) }).then(Boolean),
+      /** Opens the folder of that saved file, with it selected; false if it is not on disk (any more). */
+      showFile: (url) => invoke("show_saved_file", { url: String(url) }).then(Boolean),
     }),
   });
   // Replaces the notification plugin's window.Notification (its script runs before this one): the FE's chat popups

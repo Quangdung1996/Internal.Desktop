@@ -74,6 +74,8 @@
         show(`⬇ Đang tải ${name}… ${total ? Math.floor((received * 100) / total) + "%" : Math.round(received / 1024) + " KB"}`);
       }
       const blobUrl = URL.createObjectURL(new Blob(chunks, { type: res.headers.get("content-type") || "" }));
+      // So the app remembers the save under this file (the "Đã có trên máy" card), not the blob.
+      await window.__TAURI_INTERNALS__?.invoke("download_source", { blob: blobUrl, url: url.href }).catch(() => {});
       const a = document.createElement("a");
       a.href = blobUrl;
       a.download = name;

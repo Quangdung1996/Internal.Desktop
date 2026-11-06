@@ -47,7 +47,8 @@ pub struct Prefs {
   pub auto_update: bool,
   /// Closing the main window keeps AMS in the tray (notifications keep arriving); off: it quits.
   pub close_to_tray: bool,
-  /// Where downloads are saved (menu ▸ "Thư mục lưu file tải về…"); None: the OS Downloads folder.
+  /// Where a download's "Lưu" dialog starts (menu ▸ "Thư mục lưu file tải về…", or the last folder a
+  /// download was saved to); None: the OS Downloads folder.
   pub download_dir: Option<PathBuf>,
 }
 
@@ -280,7 +281,8 @@ pub fn open_log_folder(app: AppHandle, window: Window) -> Result<(), String> {
   app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
 }
 
-/// Where downloads go: the chosen folder if it still exists, else the OS Downloads folder.
+/// Where a download's "Lưu" dialog starts: the last folder saved to (or chosen in the menu) if it
+/// still exists, else the OS Downloads folder.
 pub fn download_dir(app: &AppHandle) -> PathBuf {
   prefs(app)
     .download_dir
@@ -299,21 +301,24 @@ pub fn choose_download_dir(app: &AppHandle) {
       let Some(dir) = folder.and_then(|f| f.into_path().ok()) else {
         return; // cancelled
       };
-      let state = handle.state::<PrefsState>();
-      let mut prefs = state.0.lock().unwrap_or_else(|e| e.into_inner());
-      let mut next = prefs.clone();
-      next.download_dir = Some(dir.clone());
-      let message = match save(&handle, &next) {
-        Ok(()) => {
-          *prefs = next;
-          format!("File tải về sẽ được lưu vào:\n{}", dir.display())
-        }
+      let message = match set_download_dir(&handle, dir.clone()) {
+        Ok(()) => format!("Khi tải file, hộp thoại lưu sẽ mở sẵn ở:\n{}", dir.display()),
         Err(e) => format!("Không lưu được lựa chọn: {e}"),
       };
-      drop(prefs);
       handle.dialog().message(message).title("Thư mục tải về").show(|_| {});
     },
   );
+}
+
+/// Saves `dir` as the download folder (where a download's "Lưu" dialog starts).
+pub fn set_download_dir(app: &AppHandle, dir: PathBuf) -> Result<(), String> {
+  let state = app.state::<PrefsState>();
+  let mut prefs = state.0.lock().unwrap_or_else(|e| e.into_inner());
+  let mut next = prefs.clone();
+  next.download_dir = Some(dir);
+  save(app, &next)?;
+  *prefs = next;
+  Ok(())
 }
 
 /// Menu ▸ "Mở thư mục tải về".

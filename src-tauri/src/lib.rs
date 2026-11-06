@@ -83,6 +83,9 @@ pub fn run() {
     .plugin(tauri::plugin::Builder::<Wry, ()>::new("title-bar").on_window_ready(window::title_bar::paint).build())
     .invoke_handler(tauri::generate_handler![
       links::open_link,
+      downloads::download_source,
+      downloads::file_saved,
+      downloads::show_saved_file,
       notifications::set_badge,
       notifications::notify,
       location::get_location,

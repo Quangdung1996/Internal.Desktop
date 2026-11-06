@@ -6,7 +6,7 @@ const script = require("fs").readFileSync(require("path").join(__dirname, "../sr
 // A made-up file host: the real one comes from AMS_FILE_HOST at build time and is not in the repo.
 const FILE_HOST = "files.example.test";
 const src = script.replace("__AMS_FILE_HOST__", FILE_HOST);
-const log = []; const clicked = []; const opened = [];
+const log = []; const clicked = []; const opened = []; const sources = [];
 const el = (tag) => ({ tag, style: {}, attrs: {}, children: [], isConnected: false, _text: "",
   setAttribute(k, v) { this.attrs[k] = v; },
   appendChild(c) { c.isConnected = true; c.parent = this; this.children.push(c); return c; },
@@ -16,7 +16,7 @@ const el = (tag) => ({ tag, style: {}, attrs: {}, children: [], isConnected: fal
 const handlers = {};
 global.document = { body: el("body"), documentElement: el("html"), createElement: el, addEventListener: (type, fn) => { handlers[type] = fn; } };
 global.location = { href: "https://approve.agari.com.vn/leave", origin: "https://approve.agari.com.vn", assign() {} };
-global.window = { open: () => "native", __TAURI_INTERNALS__: { invoke: (cmd, a) => { opened.push(a.url); return Promise.resolve(); } } };
+global.window = { open: () => "native", __TAURI_INTERNALS__: { invoke: (cmd, a) => { (cmd === "download_source" ? sources : opened).push(cmd === "download_source" ? a : a.url); return Promise.resolve(); } } };
 global.Element = function () {};
 // A clicked <a target="_blank">: attributes on the anchor, plus one descendant with a title.
 const anchor = (href, attrs = {}, childTitle) => {
@@ -53,6 +53,7 @@ const fileUrl = `https://bucket.${FILE_HOST}/ams/leave/0123456789abcdef012345678
   assert.strictEqual(tray.children.length, 1);
   assert.deepStrictEqual(clicked, [{ href: "blob:fake", download: "Đơn nghỉ.pdf" }]);
   assert.strictEqual(opened.length, 0, "no browser on success");
+  assert.deepStrictEqual(sources, [{ blob: "blob:fake", url: fileUrl }], "the save is tied to the file link");
   mode = "fail"; log.length = 0;
   window.open(fileUrl);
   await new Promise((r) => setTimeout(r, 50));
