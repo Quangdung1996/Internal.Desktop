@@ -68,9 +68,23 @@ pub(crate) fn bring_forward(window: &WebviewWindow) {
   // Undoes the app-level hide used when closing a fullscreen window (on_window_event).
   #[cfg(target_os = "macos")]
   let _ = window.app_handle().show();
+  log::info!(
+    "bring forward {}: minimized {:?}, visible {:?}, focused {:?}",
+    window.label(),
+    window.is_minimized().ok(),
+    window.is_visible().ok(),
+    window.is_focused().ok()
+  );
   let _ = window.unminimize();
   let _ = window.show();
+  // Windows' foreground lock: SetForegroundWindow from an app that is not in front (back from
+  // another app, a toast, the tray) only flashes the taskbar button and the window stays behind.
+  // Topmost for a moment raises it regardless; set_focus then gives it the keyboard when allowed.
+  #[cfg(windows)]
+  let _ = window.set_always_on_top(true);
   let _ = window.set_focus();
+  #[cfg(windows)]
+  let _ = window.set_always_on_top(false);
 }
 
 /// The chat as its own window, like a desktop messenger. The FE opens the full chat in a new tab
