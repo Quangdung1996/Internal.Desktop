@@ -19,7 +19,7 @@ to install). Only shell changes (this repo) need a new desktop release, delivere
 - Close = hide to tray (chat keeps running). Tray: Mở AMS / Mở Chat / Cài đặt… / Trợ giúp (version, bug-report contact) / Thoát. macOS: Dock click reopens.
 - Deep links: `ams://<path>?<query>` opens that page of the site (e.g. `ams://chat/<roomId>` in the chat window, others in the main window); only path/query are used, the origin stays the site's. Registered by the installer; nothing generates these links yet (emails/FE must).
 - Xem menu (macOS: View, Windows: in the window menu bar): reload (⌘R / F5), back / forward (⌘[ ⌘] / Alt+← →), open the page in the browser, copy its link.
-- Single instance, remembered window size/position, Ctrl +/- zoom.
+- Single instance, remembered window size/position, Ctrl +/- zoom. Windows: a window whose title bar is on no monitor (saved on a monitor that is gone; window-state only needs one corner inside a monitor) returns to the primary monitor, at launch and whenever it is brought forward.
 - Global shortcut ⌥⌘A (macOS) / Ctrl+Alt+A (Windows): AMS in front goes to the tray, otherwise it comes forward. Skipped (logged) if another app holds it.
 - Start: the main window opens on a bundled page (`src-tauri/src/offline/offline.html`: logo + loading bar) that goes on to the site once it answers. Offline at launch it stays there with a "Mất kết nối internet" warning and retries every 5 s; a main/chat page that never loads within 10 s also lands there.
 - Offline while in use: the page is kept, dimmed and blurred with a "Mất kết nối internet" warning (clicks held) until the connection is back; nothing navigates.
