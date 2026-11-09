@@ -11,16 +11,17 @@
   };
   // The saved name. The S3 key is not the original: AwsS3Service prefixes "<32 hex>_", and
   // FileController.GenerateUniqueFileName drops spaces/punctuation and appends "_<32 hex>". So, in order:
-  // 1. the name the page shows for this link (`hint`: a download="…" or title="…" ending in the same
-  //    extension, e.g. the chat file card), 2. response-content-disposition in the presigned URL (if
-  //    the backend adds it), 3. the key without both hex ids.
+  // 1. response-content-disposition in the presigned URL (Internal.Chat and Internal.Workspace sign
+  //    the real name there), 2. the name the page shows for this link (`hint`: a download="…" or
+  //    title="…" ending in the same extension, e.g. the chat file card); only a guess, a button
+  //    title like "Tải xuống x.pdf" is a label, 3. the key without both hex ids.
   const extOf = (n) => (/\.[^./]+$/.exec(n) || [""])[0].toLowerCase();
   const fileName = (u, hint) => {
     const key = decodeURIComponent(u.pathname.split("/").pop() || "file");
-    if (hint && extOf(hint) && extOf(hint) === extOf(key)) return hint;
     const cd = u.searchParams.get("response-content-disposition") || "";
     const m = /filename\*=UTF-8''([^;]+)/i.exec(cd) || /filename="?([^";]+)"?/i.exec(cd);
     if (m) try { return decodeURIComponent(m[1]); } catch {}
+    if (hint && extOf(hint) && extOf(hint) === extOf(key)) return hint;
     return key.replace(/^[0-9a-f]{32}_/i, "").replace(/_[0-9a-f]{32}(?=\.[^.]+$|$)/i, "") || key;
   };
   // What the page shows as this link's file name (an attribute, never free text).

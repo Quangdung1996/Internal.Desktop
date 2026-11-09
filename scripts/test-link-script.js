@@ -74,6 +74,9 @@ const fileUrl = `https://bucket.${FILE_HOST}/ams/leave/0123456789abcdef012345678
   assert.strictEqual(await savedName(() => click(anchor(key(`${hex}_a_${hex2}.pdf`), { download: "Bảng lương T10.pdf" }))), "Bảng lương T10.pdf");
   // response-content-disposition in the presigned URL, if the backend adds it
   assert.strictEqual(await savedName(() => window.open(key(`${hex}_x_${hex2}.docx`, "?response-content-disposition=" + encodeURIComponent("attachment; filename*=UTF-8''" + encodeURIComponent("Hợp đồng số 5.docx"))))), "Hợp đồng số 5.docx");
+  // the signed name beats a download button's label (title="Tải xuống <name>")
+  const signed = (n) => "?response-content-disposition=" + encodeURIComponent("attachment; filename*=UTF-8''" + encodeURIComponent(n));
+  assert.strictEqual(await savedName(() => click(anchor(key("w/f/Báo cáo.pdf", signed("Báo cáo.pdf")), { title: "Tải xuống Báo cáo.pdf" }))), "Báo cáo.pdf");
   console.log("ALL CHECKS PASSED");
   process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });
